@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Sarbeswar Meher
 #
 
 __version__ = '2.4'
@@ -33,25 +33,29 @@ import operator
 import time
 import os
 
+
 # Local
 from base.g import *
 from base import device, status, utils, tui, module
 from prnt import cups
 
+try:
+    from importlib import import_module
+except ImportError as e:
+    log.debug(e)
+    from base.utils import dyn_import_mod as import_module
+
 
 try:
     mod = module.Module(__mod__, __title__, __version__, __doc__, None,
                         (INTERACTIVE_MODE, GUI_MODE, NON_INTERACTIVE_MODE),
-                        (UI_TOOLKIT_QT4,), True, True)
+                        (UI_TOOLKIT_QT5, UI_TOOLKIT_QT4, UI_TOOLKIT_QT3), True, True)
 
     mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS,
         extra_options=[
         ("Use USB IDs to specify printer:", "-s bbb:ddd, where bbb is the USB bus ID and ddd is the USB device ID. The ':' and all leading zeroes must be present.", "option", False),
         ("Seconds to delay before download:", "-y<secs> or --delay=<secs> (float value, e.g. 0.5)", "option", False)],
          see_also_list=['hp-plugin', 'hp-toolbox'])
-
-    opts, device_uri, printer_name, mode, ui_toolkit, lang = \
-        mod.parseStdOpts('y:s:', ['delay='])
 
     device_uri = None
     printer_name = None
@@ -60,6 +64,9 @@ try:
     usb_device_id = None
     silent = False
     delay = 0.0
+
+    opts, device_uri, printer_name, mode, ui_toolkit, lang = \
+        mod.parseStdOpts('y:s:', ['delay='])
 
     for o, a in opts:
         if o == '-s':
@@ -89,20 +96,36 @@ try:
             mode = NON_INTERACTIVE_MODE
 
 
-    if mode == GUI_MODE:
+    if mode == GUI_MODE and (ui_toolkit == 'qt4' or ui_toolkit == 'qt5'):
         if not utils.canEnterGUIMode4():
-            log.error("%s -u/--gui requires Qt4 GUI support. Entering interactive mode." % __mod__)
+            log.error("%s -u/--gui requires Qt4/Qt5 GUI support. Entering interactive mode." % __mod__)
+            mode = INTERACTIVE_MODE4
+
+    elif mode == GUI_MODE and ui_toolkit == 'qt3':
+       if not utils.canEnterGUIMode():
+            log.error("%s -u/--gui requires Qt3 GUI support. Entering interactive mode." % __mod__)
             mode = INTERACTIVE_MODE
 
     if mode in (GUI_MODE, INTERACTIVE_MODE):
         mod.quiet = False
 
     if mode == GUI_MODE:
-        try:
-            from PyQt4.QtGui import QApplication
-            from ui4.firmwaredialog import FirmwareDialog
-        except ImportError:
-            log.error("Unable to load Qt4 support. Is it installed?")
+        if ui_toolkit == 'qt4'or ui_toolkit == 'qt5':
+           # try:
+           #  from PyQt4.QtGui import QApplication
+           #  from ui4.firmwaredialog import FirmwareDialog
+           # except ImportError:
+           #  log.error("Unable to load Qt4 support. Is it installed?")
+           #  sys.exit(1)
+            QApplication, ui_package = utils.import_dialog(ui_toolkit)
+            ui = import_module(ui_package + ".firmwaredialog")
+
+        if ui_toolkit == 'qt3':
+           try:
+            from qt import *
+            from ui.firmwaredialog import FirmwareDialog
+           except ImportError:
+            log.error("Unable to load Qt3 support. Is it installed?")
             sys.exit(1)
 
 
@@ -111,17 +134,19 @@ try:
         device_uri = mod.getDeviceUri(device_uri, printer_name,
             filter={'fw-download': (operator.gt, 0)})
 
-        if 1:
+        if device_uri:
             app = QApplication(sys.argv)
-
-            dialog = FirmwareDialog(None, device_uri)
+            dialog = ui.FirmwareDialog(None, device_uri)
             dialog.show()
             try:
                 log.debug("Starting GUI loop...")
-                app.exec_()
+                if ui_toolkit == 'qt4' or ui_toolkit == 'qt5':
+                   app.exec_()
+                elif ui_toolkit == 'qt3':
+                   dialog.exec_loop()
             except KeyboardInterrupt:
                 sys.exit(0)
-
+        
         sys.exit(0)
 
     mod.showTitle()
@@ -138,6 +163,9 @@ try:
         device_uri = mod.getDeviceUri(device_uri, printer_name,
             filter={'fw-download': (operator.gt, 0)})
 
+        if not device_uri:
+            sys.exit(1)
+
     try:
         d = device.Device(device_uri, printer_name)
     except Error:
@@ -151,7 +179,7 @@ try:
         try:
             d.open()
             d.queryModel()
-        except Error, e:
+        except Error as e:
             log.error("Error opening device (%s). Exiting." % e.msg)
             sys.exit(1)
 

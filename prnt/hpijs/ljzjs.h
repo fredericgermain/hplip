@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ljzjs.h : Interface for the LJZjs class
 
-  Copyright (c) 1996 - 2007, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2007, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -84,6 +84,7 @@ protected:
 //private:
     int             MapPaperSize ();
     DRIVER_ERROR    JbigCompress ();
+	DRIVER_ERROR    JbigCompress_LJZjsColor2 ();
     DRIVER_ERROR    SendItemData (BYTE ItemType, WORD Item, DWORD dwValue);
     DRIVER_ERROR    StartPage (DWORD dwWidth, DWORD dwHeight);
     virtual DRIVER_ERROR    EndPage ()
@@ -115,6 +116,7 @@ protected:
     int             m_iPlaneNumber;
     int             m_iBPP;
     int             m_iP[4];
+	BOOL			m_bLJZjsColor2Printer ; /*TRUE when the Printer model follows LJZjsColor-2 encapsulation format, else FALSE*/
 }; // LJZjs
 
 typedef enum

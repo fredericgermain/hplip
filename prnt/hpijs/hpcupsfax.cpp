@@ -1,7 +1,7 @@
 /*****************************************************************************\
     hpcupsfax.cpp : HP CUPS fax filter
 
-    Copyright (c) 2001 - 2010, Hewlett-Packard Co.
+    Copyright (c) 2001 - 2010, HP Co.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -44,6 +44,7 @@
 #include <math.h>
 #include <cups/cups.h>
 #include <cups/raster.h>
+#include <string>
 #ifdef FALSE
 #undef FALSE
 #endif
@@ -53,8 +54,10 @@
 #include "hpip.h"
 #include "hpcupsfax.h"
 #include "bug.h"
+#include "utils.h"
+using namespace std;
 
-int    fax_encoding = RASTER_MH;
+int    fax_encoding = RASTER_MMR;
 char   device_name[16];
 BYTE   szFileHeader[68];
 BYTE   szPageHeader[64];
@@ -63,7 +66,7 @@ uint32_t (*convert_endian_l)(uint32_t);
 uint16_t (*convert_endian_s)(uint16_t);
 
 static int iLogLevel = 1;
-char hpFileName[] = "/tmp/hplipfaxXXXXXX";
+char hpFileName[MAX_FILE_PATH_LEN] ;
 
 #define TIFF_HDR_SIZE 8
 #define LITTLE_ENDIAN_MODE I
@@ -73,6 +76,7 @@ char hpFileName[] = "/tmp/hplipfaxXXXXXX";
 
 // GrayLevel = (5/16)R + (9/16)G + (2/16)B
 #define RGB2BW(r, g, b) (BYTE) (((r << 2) + r + (g << 3) + g + (b << 1)) >> 4)
+
 
 void RGB2Gray (BYTE *pRGBData, int iNumPixels, BYTE *pGData)
 {
@@ -158,7 +162,30 @@ void PrintCupsHeader (cups_page_header2_t m_cupsHeader)
     BUG ("DEBUG: HPFAX - cupsPageSizeName = %s\n", m_cupsHeader.cupsPageSizeName);
 }
 
-int ProcessRasterData (cups_raster_t *cups_raster, int fdFax)
+int GetPageSizeFromString(char *string)
+{
+   int iPageSize = atoi(string);
+   if(iPageSize == 0)
+   {
+      if(strcmp(string,"Letter") ==0){
+         iPageSize = 1;
+      }
+      else if(strcmp(string,"A4") ==0){
+         iPageSize = 2;
+      }
+      else if(strcmp(string,"Legal") ==0){
+         iPageSize = 3;
+      }
+      else{
+         DBG("hpcupsfax: GetPageSizeFromString:Default Page Size is taken,ensure it is ok.\n");
+         iPageSize = 1;
+      }
+   }
+   DBG("hpcupsfax: GetPageSizeFromString: PageSize = %d\n",iPageSize);
+   return iPageSize;
+}     
+
+int  ProcessRasterData (cups_raster_t *cups_raster, int fdFax)
 {
     int                status = 0;
     unsigned int                i;
@@ -191,15 +218,6 @@ int ProcessRasterData (cups_raster_t *cups_raster, int fdFax)
             {
                 fax_encoding = RASTER_JPEG;
             }
-            else if (cups_header.cupsCompression == RASTER_AUTO)
-            {
-                pDev = getenv ("DEVICE_URI");
-                if ((strstr (pDev, "Laser") || strstr (pDev, "laser")))
-                {
-                    fax_encoding = RASTER_MMR;
-                }
-            }
-
             memset (szFileHeader, 0, sizeof (szFileHeader));
             memcpy (szFileHeader, "hplip_g3", 8);
             p = szFileHeader + 8;
@@ -207,7 +225,8 @@ int ProcessRasterData (cups_raster_t *cups_raster, int fdFax)
             HPLIPPUTINT32 (p, 0); p += 4;                // Total number of pages in this job
             HPLIPPUTINT16 (p, cups_header.HWResolution[0]); p += 2;
             HPLIPPUTINT16 (p, cups_header.HWResolution[1]); p += 2;
-            *p++ = atoi (cups_header.cupsPageSizeName);  // Output paper size
+            BUG("ATOI Value  = %d",atoi (cups_header.cupsPageSizeName));
+            *p++ = GetPageSizeFromString(cups_header.cupsPageSizeName);  // Output paper size
             *p++ = atoi (cups_header.OutputType);        // Output quality
             *p++ = fax_encoding;                         // MH, MMR or JPEG
             p += 4;                                      // Reserved 1
@@ -216,17 +235,20 @@ int ProcessRasterData (cups_raster_t *cups_raster, int fdFax)
         }
 
         widthMMR = (((cups_header.cupsWidth + 7) >> 3)) << 3;
-
+        
 /*
  *      Devices in the HPFax2 category require fixed width of 2528 pixels.
  *      Example: LaserJet 2727 MFP
  */
-
-        if (!strcmp (device_name, "HPFax2"))
+       
+        if (strcmp (device_name, "HPFax4") ==0)
+        {
+            widthMMR = 1728;                      
+        }
+        else if (!strcmp (device_name, "HPFax2"))
         {
             widthMMR = 2528;
-        }
-
+        }              
         iInputBufSize = widthMMR * cups_header.cupsHeight;
 
         pInputBuf = (LPBYTE) malloc (iInputBufSize);
@@ -400,7 +422,7 @@ BUGOUT:
  * Reading from stdin into a temp file
  * Getting the final file with HPLIP file and page headers
  */
-int ProcessTiffData(int fromFD, int toFD)
+int ProcessTiffData(int fromFD, int toFD, char* user_name)
 {
     BYTE      *p;
     int       fdTiff;
@@ -419,13 +441,17 @@ int ProcessTiffData(int fromFD, int toFD)
     int bytes_written = 0;
     int ret_status = 0;
     int bytes_read = 0;
-    char hpTiffFileName[] = "/tmp/hpliptiffXXXXXX";
+    char hpTiffFileName[MAX_FILE_PATH_LEN];
     long input_file_size = 0;
+    FILE* pFilePtrFax;
+    snprintf(hpTiffFileName,sizeof(hpTiffFileName), "%s/hp_%s_fax_tiffXXXXXX",CUPS_TMP_DIR,user_name);
 
-    fdTiff = mkstemp (hpTiffFileName);
+
+//    fdTiff = mkstemp (hpTiffFileName);
+    fdTiff = createTempFile(hpTiffFileName, &pFilePtrFax);
     if (fdTiff < 0)
     {
-        BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpTiffFileName);
+        BUG("ERROR: Unable to open Fax output file - %s for writing\n", hpTiffFileName);
         return 1;
     }
 
@@ -573,6 +599,10 @@ int ProcessTiffData(int fromFD, int toFD)
     HPLIPPUTINT32 ((szFileHeader + 9), page_counter);
     write (toFD, szFileHeader + 9, 4);
 
+	if (!(iLogLevel & SAVE_PCL_FILE))
+	{
+         unlink(hpTiffFileName);
+	}
     return ret_status;
 }
 
@@ -582,7 +612,6 @@ int send_data_to_stdout(int fromFD)
     int     iSize, i;
     int     len;
     BYTE    *pTmp = NULL;
-    FILE    *fp = NULL;
 
     iSize = lseek (fromFD, 0, SEEK_END);
     lseek (fromFD, 0, SEEK_SET);
@@ -602,27 +631,11 @@ int send_data_to_stdout(int fromFD)
         }
     }
 
-    fp = NULL;
-    if (iLogLevel & SAVE_PCL_FILE)
-    {
-        fp = fopen ("/tmp/hpcupsfax.out", "w");
-        system ("chmod 666 /tmp/hpcupsfax.out");
-    }
-    
     while ((len = read (fromFD, pTmp, iSize)) > 0)
     {
         write (STDOUT_FILENO, pTmp, len);
-        if (iLogLevel & SAVE_PCL_FILE && fp)
-        {
-            fwrite (pTmp, 1, len, fp);
-        }
     }
     free (pTmp);
-
-    if (fp)
-    {
-        fclose (fp);
-    }
 
     return 0;
 }
@@ -633,7 +646,7 @@ int main (int argc, char **argv)
     int                 fd = 0;
     int                 fdFax = -1;
     int i = 0;
-    FILE                *fdTiff;
+    FILE                *pFilePtrFax;
     cups_raster_t       *cups_raster;
     ppd_file_t          *ppd;
     ppd_attr_t          *attr;
@@ -664,12 +677,17 @@ int main (int argc, char **argv)
          i++;
     }
 
-    fdFax = mkstemp (hpFileName);
+    snprintf(hpFileName,sizeof(hpFileName),"%s/hp_%s_fax_Log_XXXXXX",CUPS_TMP_DIR, argv[2]);
+
+//    fdFax = mkstemp (hpFileName);
+    fdFax = createTempFile(hpFileName, &pFilePtrFax);
     if (fdFax < 0)
     {
-        BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpFileName);
-        return 1;
+         BUG ("ERROR: Unable to open Fax output file - %s for writing\n", hpFileName);
+         return 1;
     }
+    else
+        chmod(hpFileName, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP );
 
     /*********** MAIN ***********/
 
@@ -696,18 +714,47 @@ int main (int argc, char **argv)
         ppdClose (ppd);
         BUG ("ERROR: Required DefaultEncoding is missing in ppd file\n");
         return 1;
+    }     
+    if (strstr(argv[5],"Encoding=MMR"))
+    {
+       fax_encoding = RASTER_MMR;
+    }   
+    else if(strstr(argv[5],"Encoding=MH"))
+    {
+       fax_encoding = RASTER_MH; 
+    }       
+    else if (strstr(argv[5],"Encoding=Auto"))
+    { 
+       BUG ("WARNING: AUTO is selected for Fax Encoding! Ensure this type is correct for the device");                 
+       fax_encoding = RASTER_AUTO;
+    }    
+    else if (strstr(argv[5],"Encoding=TIFF"))
+    {
+       fax_encoding = RASTER_TIFF;
     }
-    fax_encoding = atoi(attr->value);
+    else
+    {
+       if(strcmp(attr->value,"MH") == 0) {
+          fax_encoding = RASTER_MH;
+       } else if(strcmp(attr->value,"MMR") == 0){
+          fax_encoding = RASTER_MMR;
+       }else if(strcmp(attr->value,"TIFF") ==0){
+          fax_encoding = RASTER_TIFF;               
+       }else if(strcmp(attr->value,"Auto") ==0){
+          BUG ("WARNING: AUTO is selected for Fax Encoding! Ensure this type is correct for the device");                 
+          fax_encoding = RASTER_AUTO;
+       }
+    }
     if (fax_encoding < 0) {
         BUG ("ERROR: Required DefaultEncoding is invalid in ppd file\n");
         return 1;
     }
-    DBG("hpcupsfax: main: fax_encoding from ppd = %d \n", fax_encoding);
+    DBG("hpcupsfax: main: fax_encoding = %d \n", fax_encoding);
     ppdClose (ppd);
 
     if (fax_encoding == RASTER_TIFF)
     {
-        status = ProcessTiffData(fd, fdFax);
+        status = ProcessTiffData(fd, fdFax, argv[2]);
     } else {
        cups_raster = cupsRasterOpen (fd, CUPS_RASTER_READ);
        if (cups_raster == NULL)
@@ -731,9 +778,15 @@ EPILOGUE:
     {
         close (fd);
     }
+
     if (fdFax > 0)
     {
         close (fdFax);
+	if (!(iLogLevel & SAVE_PCL_FILE))
+	{
+             //Retain the intermediate file only if it is needed for debugging purpose.
+             unlink(hpFileName);
+	}
     }
 
     return status;

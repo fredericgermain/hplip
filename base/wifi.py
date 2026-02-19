@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,12 +21,12 @@
 
 # StdLib
 import time
-import cStringIO
+import io
 import xml.parsers.expat
 
 # Local
-from base.g import *
-from base import device, utils
+from .g import *
+from . import device, utils
 
 MAX_NETWORKS = 100
 MAX_RETRIES = 20
@@ -47,7 +47,7 @@ def _readWriteWifiConfig(dev, request):
     bytes_written = dev.writeWifiConfig(request)
     log.debug("Wrote %d bytes." % bytes_written)
 
-    data = cStringIO.StringIO()
+    data = io.BytesIO()
     log.debug("Reading response on wifi config channel...")
     bytesread = dev.readWifiConfig(device.MAX_BUFFER, stream=data, timeout=30)
     i = 0
@@ -60,19 +60,13 @@ def _readWriteWifiConfig(dev, request):
 
     data = data.getvalue()
 
-    #log.xml(repr(data))
-
     # Convert any char references
-    data = utils.unescape(data)
+    data = utils.unescape(data.decode('utf-8'))
 
-    #log.xml(repr(data))
-    data = unicode(data, 'utf-8')
-
-    #log.xml(repr(data))
 
     # C4380 returns invalid XML for DeviceCapabilitiesResponse
     # Eliminate any invalid characters
-    data = data.replace(u"Devicecapabilities", u"DeviceCapabilities").replace('\x00', '')
+    data = data.replace(to_unicode("Devicecapabilities"), to_unicode("DeviceCapabilities")).replace('\x00', '')
 
     log.log_data(data)
     log.debug("Read %d bytes." % len(data))
@@ -85,7 +79,7 @@ def _readWriteWifiConfig(dev, request):
 
     try:
         params = utils.XMLToDictParser().parseXML(data)
-    except xml.parsers.expat.ExpatError, e:
+    except xml.parsers.expat.ExpatError as e:
         log.error("XML parser failed: %s" % e)
         match = re.search(r"""line\s*(\d+).*?column\s*(\d+)""", str(e), re.I)
         if match is not None:
@@ -171,17 +165,17 @@ def getAdaptorList(dev):
             ret['adaptorpresence-0'] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorpresence']
             ret['adaptorstate-0'] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorstate']
             ret['adaptortype-0'] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptortype']
-        except KeyError, e:
+        except KeyError as e:
             log.debug("Missing response key: %s" % e)
     else:
-        for a in xrange(adaptor_list_length):
+        for a in range(adaptor_list_length):
             try:
                 ret['adaptorid-%d' % a] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorid-%d' % a]
                 ret['adaptorname-%d' % a] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorname-%d' % a]
                 ret['adaptorpresence-%d' % a] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorpresence-%d' % a]
                 ret['adaptorstate-%d' % a] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptorstate-%d' % a]
                 ret['adaptortype-%d' % a] = params['wificonfig-getadaptorlistresponse-adaptorlist-adaptorinfo-adaptortype-%d' % a]
-            except KeyError, e:
+            except KeyError as e:
                 log.debug("Missing response key: %s" % e)
 
     return ret
@@ -189,7 +183,9 @@ def getAdaptorList(dev):
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 def getWifiAdaptorID(dev):
-    # ret: adaptor_id, name, state, presence
+    # rVal: [[adaptor_id, name, state, presence]]
+    # ret: [adaptor_id, name, state, presence]
+    rVal = []
     ret = getAdaptorList(dev)
 
     try:
@@ -197,7 +193,7 @@ def getWifiAdaptorID(dev):
     except KeyError:
         num_adaptors = 0
 
-    for n in xrange(num_adaptors):
+    for n in range(num_adaptors):
         try:
             name = ret['adaptortype-%d' % n]
         except KeyError:
@@ -218,36 +214,41 @@ def getWifiAdaptorID(dev):
 
                 r.append(x)
 
-            return r
+            rVal.append(r)
+            
+    return rVal
 
-    return -1, 'Unknown', 'Unknown', 'Unknown'
 
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-
-
-def setAdaptorPower(dev, adaptor_id=0, power_state='PowerOn'):
-    ret = {}
-    request = PREAMBLE + """<SetAdaptorPowerRequest>
+                         
+def setAdaptorPower(dev, adapterList, power_state='PowerOn'):
+    adaptor_id=-1
+    adaptorName =""
+    for a in adapterList:
+        adaptor_id = a[0]
+        adaptorName = a[1]
+        request = PREAMBLE + """<SetAdaptorPowerRequest>
 <AdaptorID>%s</AdaptorID>
 <PowerState>%s</PowerState>
 </SetAdaptorPowerRequest>
-</WiFiConfig>""" % (adaptor_id, power_state.encode('utf-8'))
+</WiFiConfig>""" % (adaptor_id, power_state)
 
-    errorreturn, params = _readWriteWifiConfig(dev, request)
-    if not params:
-        return {}
+        errorreturn, params = _readWriteWifiConfig(dev, request)
+        if not params:
+            return -1 ,"","",""
 
-    ret['errorreturn'] = errorreturn
-    if errorreturn != 'ok':
-        log.error("SetAdaptorPower returned an error: %s" % errorreturn)
-        return ret
+        if errorreturn != 'ok':
+            log.error("SetAdaptorPower returned an error: %s" % errorreturn)
+        else:
+            log.debug("SetAdaptorPower returned Success.")
+            return adaptor_id, adaptorName, a[2], a[3]
 
-    return ret
+    return -1 ,"","",""
 
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 
-def performScan(dev, ssid=None):
+def performScan(dev, adapterName, ssid=None):
     ret, i, scan_state = {}, 0, "NewScan"
 
     while True:
@@ -265,7 +266,7 @@ def performScan(dev, ssid=None):
 <SSID>%s</SSID>
 <ScanState>%s</ScanState>
 </DirectedScanRequest>
-</WiFiConfig>""" % (ssid.encode('utf-8'), scan_state)
+</WiFiConfig>""" % (ssid, scan_state)  
 
             typ = 'Directed'
             rsp = 'directedscanresponse'
@@ -296,7 +297,7 @@ def performScan(dev, ssid=None):
             try:
                 ssid = params['wificonfig-%s-scanlist-scanentry-ssid' % rsp]
                 if not ssid:
-                    ret['ssid-0'] = u'(unknown)'
+                    ret['ssid-0'] = to_unicode('(unknown)')
                 else:
                     ret['ssid-0'] = ssid
                 ret['bssid-0'] = params['wificonfig-%s-scanlist-scanentry-bssid' % rsp]
@@ -306,16 +307,16 @@ def performScan(dev, ssid=None):
                 ret['encryptiontype-0'] = params['wificonfig-%s-scanlist-scanentry-encryptiontype' % rsp]
                 ret['rank-0'] = params['wificonfig-%s-scanlist-scanentry-rank' % rsp]
                 ret['signalstrength-0'] = params['wificonfig-%s-scanlist-scanentry-signalstrength' % rsp]
-            except KeyError, e:
+            except KeyError as e:
                 log.debug("Missing response key: %s" % e)
 
         else:
-            for a in xrange(number_of_scan_entries):
+            for a in range(number_of_scan_entries):
                 j = a+i
                 try:
                     ssid = params['wificonfig-%s-scanlist-scanentry-ssid-%d' % (rsp, j)]
                     if not ssid:
-                        ret['ssid-%d' % j] = u'(unknown)'
+                        ret['ssid-%d' % j] = to_unicode('(unknown)')
                     else:
                         ret['ssid-%d' % j] = ssid
                     ret['bssid-%d' % j] = params['wificonfig-%s-scanlist-scanentry-bssid-%d' % (rsp, j)]
@@ -325,14 +326,14 @@ def performScan(dev, ssid=None):
                     ret['encryptiontype-%d' % j] = params['wificonfig-%s-scanlist-scanentry-encryptiontype-%d' % (rsp, j)]
                     ret['rank-%d' % j] = params['wificonfig-%s-scanlist-scanentry-rank-%d' % (rsp, j)]
                     ret['signalstrength-%d' % j] = params['wificonfig-%s-scanlist-scanentry-signalstrength-%d' % (rsp, j)]
-                except KeyError, e:
+                except KeyError as e:
                     log.debug("Missing response key: %s" % e)
 
         try:
             scan_state = ret['scanstate'] = params['wificonfig-%s-scanstate' % rsp] # MoreEntriesAvailable, ScanComplete
             ret['signalstrengthmax'] = params['wificonfig-%s-scansettings-signalstrengthmax' % rsp]
             ret['signalstrengthmin'] = params['wificonfig-%s-scansettings-signalstrengthmin' % rsp]
-        except KeyError, e:
+        except KeyError as e:
             log.debug("Missing response key: %s" % e)
 
         if scan_state.lower() == 'scancomplete':
@@ -351,7 +352,7 @@ def performScan(dev, ssid=None):
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 
-def associate(dev, ssid, communication_mode, encryption_type, key):
+def associate(dev, adapterName,ssid, communication_mode, encryption_type, key):
     ret = {}
     request = PREAMBLE + """<AssociateRequest>
 <SSID>%s</SSID>
@@ -360,9 +361,10 @@ def associate(dev, ssid, communication_mode, encryption_type, key):
 <EncryptedParameters>%s</EncryptedParameters>
 <Key>%s</Key>
 </AssociateRequest>
-</WiFiConfig>""" % (ssid.encode('utf-8'), communication_mode.encode('utf-8'),
-                    encryption_type.encode('utf-8'), u"False".encode('utf-8'),
-                    key.encode('utf-8'))
+</WiFiConfig>""" % (ssid, communication_mode,
+                    encryption_type, "False",
+                    key)
+ 
 
     errorreturn, params = _readWriteWifiConfig(dev, request)
     if not params:
@@ -378,7 +380,7 @@ def associate(dev, ssid, communication_mode, encryption_type, key):
 # XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 
-def getVSACodes(dev):
+def getVSACodes(dev,adapterName):
     ret = []
     request = PREAMBLE + """<GetVSACodesRequest>
 </GetVSACodesRequest>
@@ -449,7 +451,7 @@ def __getIPConfiguration(dev, adaptor_id=0):
     return ret
 
 
-def getIPConfiguration(dev, adaptor_id=0):
+def getIPConfiguration(dev, adapterName, adaptor_id=0):
     ip, hostname, addressmode, subnetmask, gateway, pridns, sec_dns = \
         '0.0.0.0', 'Unknown', 'Unknown', '0.0.0.0', '0.0.0.0', '0.0.0.0', '0.0.0.0'
     ret = __getIPConfiguration(dev, adaptor_id)
@@ -463,7 +465,7 @@ def getIPConfiguration(dev, adaptor_id=0):
             gateway = ret['gatewayaddress']
             pridns = ret['primarydnsaddress']
             sec_dns = ret['alternatednsaddress']
-        except KeyError, e:
+        except KeyError as e:
             log.debug("Missing response key: %s" % str(e))
 
     return ip, hostname, addressmode, subnetmask, gateway, pridns, sec_dns
@@ -502,7 +504,7 @@ def __getSignalStrength(dev, adaptor_id=0):
     return ret
 
 
-def getSignalStrength(dev, adaptor_id=0):
+def getSignalStrength(dev, adapterName, ssid, adaptor_id=0):
     ss_max, ss_min, ss_val, ss_dbm = 5, 0, 0, -200
     ret = __getSignalStrength(dev, adaptor_id)
 
@@ -512,7 +514,7 @@ def getSignalStrength(dev, adaptor_id=0):
             ss_min = ret['signalstrengthmin']
             ss_val = ret['signalstrengthvalue']
             ss_dbm = ret['dbm']
-        except KeyError, e:
+        except KeyError as e:
             log.debug("Missing response key: %s" % str(e))
 
     return ss_max, ss_min, ss_val, ss_dbm
@@ -551,7 +553,7 @@ def __getCryptoSuite(dev):
     return ret
 
 
-def getCryptoSuite(dev):
+def getCryptoSuite(dev, adapterName):
     alg, mode, secretid = '', '', ''
     ret = __getCryptoSuite(dev)
 
@@ -560,7 +562,7 @@ def getCryptoSuite(dev):
             alg = ret['crypoalgorithm']
             mode = ret['crypomode']
             secretid = ret['secretid']
-        except KeyError, e:
+        except KeyError as e:
             log.debug("Missing response key: %s" % str(e))
 
     return  alg, mode, secretid
@@ -578,7 +580,7 @@ def getHostname(dev):
         return ret
 
     if errorreturn != 'ok':
-        log.error("GetHostname returned an error: %s" % errorreturn)
+       # log.error("GetHostname returned an error: %s" % errorreturn)
         return ret
 
     try:
@@ -605,16 +607,17 @@ def getLocation(bssid, ss):
 <mac>%s</mac>
 <signal-strength>%d</signal-strength>
 </access-point>
-</LocationRQ>""" % (bssid.encode("utf-8"), ss)
+</LocationRQ>""" % (bssid, ss)
 
-    import httplib, socket
+    from .sixext.moves import http_client
+    import socket
     ret = {}
     request_len = len(request)
 
     log.log_data(request)
 
     try:
-        conn = httplib.HTTPSConnection("api.skyhookwireless.com")
+        conn = http_client.HTTPSConnection("api.skyhookwireless.com")
         conn.putrequest("POST", "/wps2/location")
         conn.putheader("Content-type", "text/xml")
         conn.putheader("Content-Length", str(request_len))

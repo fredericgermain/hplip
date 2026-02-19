@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -33,10 +33,18 @@ import os
 import getopt
 import signal
 
+
 # Local
 from base.g import *
+#from . import base.utils as utils
 import base.utils as utils
 from base import status, tui, module
+
+try:
+    from importlib import import_module
+except ImportError as e:
+    log.debug(e)
+    from base.utils import dyn_import_mod as import_module
 
 
 w = None # write pipe
@@ -65,13 +73,13 @@ def handle_session_signal(*args, **kwds):
 
 
 mod = module.Module(__mod__, __title__, __version__, __doc__, None,
-                    (GUI_MODE,), (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4))
+                    (GUI_MODE,), (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4, UI_TOOLKIT_QT5))
 mod.lockInstance()
 
 mod.setUsage(module.USAGE_FLAG_NONE,
              extra_options=[("Disable dbus (Qt3 only):", "-x or --disable-dbus", "option", False)],
              see_also_list = ['hp-align', 'hp-clean', 'hp-colorcal', 'hp-devicesettings',
-                              'hp-hp-faxsetup', 'hp-firmware', 'hp-info', 'hp-levels',
+                              'hp-faxsetup', 'hp-firmware', 'hp-info', 'hp-levels',
                               'hp-linefeedcal', 'hp-makecopies', 'hp-plugin',
                               'hp-pqdiag', 'hp-print', 'hp-printsettings', 'hp-scan',
                               'hp-sendfax', 'hp-testpage', 'hp-timedate', 'hp-unload'])
@@ -100,8 +108,11 @@ if ui_toolkit == 'qt3':
     try:
         from dbus import SessionBus
         import dbus.service
-        from dbus.mainloop.glib import DBusGMainLoop
+        from dbus.mainloop.glib import DBusGMainLoop, threads_init
         from gobject import MainLoop
+        import glib
+        glib.threads_init()
+        dbus.mainloop.glib.threads_init()
     except ImportError:
         log.error("Unable to load dbus - Automatic status updates in HPLIP Device Manager will be disabled.")
         disable_dbus = True
@@ -184,7 +195,7 @@ if ui_toolkit == 'qt3':
                 log.debug("Killing child toolbox process (pid=%d)..." % child_pid)
                 try:
                     os.kill(child_pid, signal.SIGKILL)
-                except OSError, e:
+                except OSError as e:
                     log.debug("Failed: %s" % e.message)
 
             mod.unlockInstance()
@@ -203,7 +214,7 @@ if ui_toolkit == 'qt3':
 
             try:
                 session_bus = dbus.SessionBus()
-            except dbus.exceptions.DBusException, e:
+            except dbus.exceptions.DBusException as e:
                 if os.getuid() != 0:
                     log.error("Unable to connect to dbus session bus. Exiting.")
                     sys.exit(1)
@@ -228,7 +239,7 @@ if ui_toolkit == 'qt3':
                 log.debug("Killing parent toolbox process (pid=%d)..." % parent_pid)
                 try:
                     os.kill(parent_pid, signal.SIGKILL)
-                except OSError, e:
+                except OSError as e:
                     log.debug("Failed: %s" % e.message)
 
             mod.unlockInstance()
@@ -236,14 +247,29 @@ if ui_toolkit == 'qt3':
         sys.exit(0)
 
 else: # qt4
-    try:
-        from PyQt4.QtGui import QApplication
+    # if utils.ui_status[1] == "PyQt4":
+    #     try:
+    #         from PyQt4.QtGui import QApplication
+    #         from ui4.devmgr5 import DevMgr5
+    #     except ImportError as e:
+    #         log.error(e)
+    #         sys.exit(1)
+    # elif utils.ui_status[1] == "PyQt5":
+    #     try:
+    #         from PyQt5.QtWidgets import QApplication
+    #         from ui5.devmgr5 import DevMgr5
+    #     except ImportError as e:
+    #         log.error(e)
+    #         import traceback
+    #         traceback.print_exc()
+    #         sys.exit(1)
+    # else:
+    #     log.error("Unable to load Qt support")
+    #     sys.exit(1)
+    QApplication, ui_package = utils.import_dialog(ui_toolkit)
+    ui = import_module(ui_package + ".devmgr5")
 
-    except ImportError:
-        log.error("Unable to load Qt4 support. Is it installed?")
-        sys.exit(1)
 
-    from ui4.devmgr5 import DevMgr5
 
     log.set_module("hp-toolbox(UI)")
 
@@ -251,7 +277,7 @@ else: # qt4
     #try:
         app = QApplication(sys.argv)
 
-        toolbox = DevMgr5(__version__, device_uri,  None)
+        toolbox = ui.DevMgr5(__version__, device_uri,  None)
         toolbox.show()
         try:
             log.debug("Starting GUI loop...")

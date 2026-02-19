@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,20 +24,21 @@
 import sys
 import os.path
 import os
+import subprocess
 
 # Local
 from base.g import *
 from base import utils, magic
 from prnt import cups
 from base.codes import *
-from ui_utils import *
-
+from .ui_utils import *
+from base.sixext import to_unicode, to_string_utf8, from_unicode_to_str
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Other UI
-from mimetypesdialog import MimeTypesDialog
+from .mimetypesdialog import MimeTypesDialog
 
 
 FILETABLE_TYPE_PRINT = 0
@@ -175,7 +176,7 @@ class FileTable(QWidget):
                         # Filename (basename)
                         i = QTableWidgetItem(os.path.basename(filename))
 
-                    i.setData(Qt.UserRole, QVariant(filename))
+                    i.setData(Qt.UserRole, to_unicode(filename))
                     i.setFlags(flags)
 
                     if self.selected_filename is not None and \
@@ -203,7 +204,7 @@ class FileTable(QWidget):
                         if num_pages < 1:
                             i = QTableWidgetItem(self.__tr("(unknown)"))
                         else:
-                            i = QTableWidgetItem(unicode(num_pages))
+                            i = QTableWidgetItem(to_unicode(num_pages))
                         i.setFlags(flags)
                         self.FileTable.setItem(row, col, i)
                         col += 1
@@ -262,13 +263,26 @@ class FileTable(QWidget):
         if self.typ == FILETABLE_TYPE_PRINT:
             s = self.__tr("Select File(s) to Print")
         else:
+            stat = ''
+            try :
+                p = subprocess.Popen('getenforce', stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stat, err = p.communicate()
+                stat = to_string_utf8(stat)
+            except OSError :
+                pass
+            except :
+                log.exception()
+            # if stat.strip('\n') == 'Enforcing' :
+            #     FailureUI(self, self.__tr("<b>Unable to add file. Please disable SeLinux.</b><p>Either disable it manually or run hp-doctor from terminal.</p>"),
+            #         self.__tr("HP Device Manager"))
+            #     return
+
             s = self.__tr("Select File(s) to Send")
 
         files = list(QFileDialog.getOpenFileNames(self, s,
             self.working_dir, self.__tr("All files (*)")))
 
-        files = [unicode(f) for f in files]
-
+        files = [to_unicode(f) for f in files]
         if files:
             self.addFileList(files)
 
@@ -284,7 +298,6 @@ class FileTable(QWidget):
     def addFileFromUI(self, f, title='', num_pages=0):
         f = os.path.abspath(os.path.expanduser(f))
         log.debug("Trying to add file: %s" % f)
-
         if os.path.exists(f) and os.access(f, os.R_OK):
             mime_type = magic.mime_type(f)
             mime_type_desc = mime_type
@@ -294,10 +307,10 @@ class FileTable(QWidget):
                 mime_type_desc = MIME_TYPES_DESC[mime_type][0]
             except KeyError:
                 if self.typ == FILETABLE_TYPE_PRINT:
-                    FailureUI(self, self.__tr("<b>You are trying to add a file '%1' that cannot be directly printed with this utility.</b><p>To print this file, use the print command in the application that created it.<p>Note: Click <i>Show Valid Types...</i> to view a list of compatible file types that can be directly printed from this utility.").arg(f),
+                    FailureUI(self, self.__tr("<b>You are trying to add a file that cannot be directly printed with this utility.</b><p>To print this file, use the print command in the application that created it.<p>Note: Click <i>Show Valid Types...</i> to view a list of compatible file types that can be directly printed from this utility."),
                         self.__tr("HP Device Manager"))
                 else:
-                    FailureUI(self, self.__tr("<b>You are trying to add a file '%1' that cannot be directly faxed with this utility.</b><p>To fax this file, use the print command in the application that created it (using the appropriate fax print queue).<p>Note: Click <i>Show Valid Types...</i> to view a list of compatible file types that can be directly added to the fax file list in this utility.").arg(f),
+                    FailureUI(self, self.__tr("<b>You are trying to add a file '%s' that cannot be directly faxed with this utility.</b><p>To fax this file, use the print command in the application that created it (using the appropriate fax print queue).<p>Note: Click <i>Show Valid Types...</i> to view a list of compatible file types that can be directly added to the fax file list in this utility."%f),
                         self.__tr("HP Device Manager"))
             else:
                 if self.typ == FILETABLE_TYPE_PRINT:
@@ -305,7 +318,7 @@ class FileTable(QWidget):
                 else:
                     self.fax_add_callback(f)
         else:
-            FailureUI(self, self.__tr("<b>Unable to add file '%1' to file list (file not found or insufficient permissions).</b><p>Check the file name and try again.").arg(f),
+            FailureUI(self, self.__tr("<b>Unable to add file '%s' to file list (file not found or insufficient permissions).</b><p>Check the file name and try again."%f),
                 self.__tr("HP Device Manager"))
 
 
@@ -320,7 +333,8 @@ class FileTable(QWidget):
         i = self.FileTable.item(self.FileTable.currentRow(), 0)
         if i is None:
             return None
-        return i.data(Qt.UserRole).toString()
+
+        return value_str(i.data(Qt.UserRole))
 
 
     def RemoveFileButton_clicked(self):
@@ -335,7 +349,7 @@ class FileTable(QWidget):
         temp = self.file_list[:]
         index = 0
         for f, mime_type, mime_type_desc, title, num_pages in temp:
-            if f == filename:
+            if f == to_unicode(filename):
                 del self.file_list[index]
                 self.emit(SIGNAL("fileListChanged"))
                 self.updateUi(False)
@@ -395,7 +409,7 @@ class FileTable(QWidget):
 
 
     def FileTable_customContextMenuRequested(self, p):
-        print p
+        print(p)
 
 
     def __tr(self,s,c = None):

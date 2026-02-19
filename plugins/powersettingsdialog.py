@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,12 +20,12 @@
 #
 
 from base.g import *
-import powersettings
-import powersettings2
+from . import powersettings
+from . import powersettings2
 from base import pml
 
 from qt import *
-from powersettingsdialog_base import PowerSettingsDialog_base
+from .powersettingsdialog_base import PowerSettingsDialog_base
 
 
 class PowerSettingsDialog(PowerSettingsDialog_base): # Dyn Ctr (DJ4xx)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,16 +17,15 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Naga Samrat Chowdary Narla,
 
 # Local
-from base.g import *
-from base import utils
-
+from .g import *
+from . import utils
+from .sixext import to_unicode
 # StdLib
 import os.path
 import re
-import glob
 
 try:
     import datetime
@@ -36,7 +35,7 @@ except ImportError:
     datetime = None
 
 
-pat_prod_num = re.compile("""(\d+)""", re.I)
+pat_prod_num = re.compile(r"""(\d+)""", re.I)
 
 TYPE_UNKNOWN = 0
 TYPE_STRING = 1
@@ -50,10 +49,15 @@ TYPE_URI = TYPE_STR # (7) not used (yet)
 TYPE_DATE = 8  # format: mm/dd/yyyy
 
 
+FAMILY_CLASSES = ["PCL3-Class3A","PCL3-Class3B","PCL3-Class3","PCLM-COLOR","PCLM-MONO","PCL4-Class1","LJ-Class1","LJ-Class2","LJ-Class3","LJ-Class4","LJ-Class4A","LJ-Class5","LJ-Class6","DJGenericVIP","DJ9xxVIP","DJ55xx","Stabler","StingrayOJ","Copperhead","CopperheadXLP","Copperhead12","CopperheadIPH","CopperheadIPH15","CopperheadIPH17","CLE","CLE17","PyramidRefresh17",
+"Saipan","Saipan15B","Kapan","ViperPlusVIP","ViperMinusVIP","Corbett","Ampere","Python","Python10","Python11","Mimas","Mimas15","Mimas17","MimasTDR","PyramidRefresh15","P15_CISS","Pyramid",
+"Pyramid15","PyramidPlus","Gemstone","SPDOfficejetProAsize","SPDOfficejetProBsize","OJ7000","OJProKx50","PSP100","PSP470","Peaks_mod-mech","Athena-L"] 
+
 TECH_CLASSES = [
     "Undefined", # This will show an error (and its the default)
     "Unsupported", # This is for unsupported models, and it will not show an error
     "Postscript",
+	"PDF",
     "DJGenericVIP",
     #"PSB9100", not used on HPLIP
     "LJMono",
@@ -99,6 +103,37 @@ TECH_CLASSES = [
     "Python",
     "OJ7000",
     "Pyramid",
+    "Pyramid15",
+    "Python10",
+    "Mimas",
+    "Mimas15",
+    "StingrayOJ",
+    "Copperhead",
+    "CopperheadXLP",
+    "Copperhead12",
+    "CopperheadIPH",
+    "CopperheadIPH15",
+    "CopperheadIPH17",
+    "PyramidRefresh15",
+    "PyramidRefresh17",
+    "Ampere",
+    "Python11",
+    "Saipan",
+    "PyramidPlus",
+    "Hbpl1",
+    "Kapan",
+    "MimasTDR",
+    "Saipan15B",
+    "Gemstone",
+    "SPDOfficejetProAsize",
+	"CLE",
+    "SPDOfficejetProBsize",
+        "CLE17",
+    "Mimas17",
+    "P15_CISS",
+    "Peaks_mod-mech",
+    "Athena-L"
+    
 ]
 
 TECH_CLASSES.sort()
@@ -106,6 +141,7 @@ TECH_CLASSES.sort()
 TECH_CLASS_PDLS = {
     #"Undefined"    : '?',
     "Postscript"   : 'ps',
+	"PDF"          : 'pdf',
     "DJGenericVIP" : 'pcl3',
     #"PSB9100"      : 'pcl3',
     "LJMono"       : 'pcl3',
@@ -149,11 +185,39 @@ TECH_CLASS_PDLS = {
     "Corbett"       : 'pcl3',
     "Python"        : 'pcl3',
     "OJ7000"        : 'pcl3',
+    "Python10"      : 'pcl3',
+    "Mimas"      : 'pcl3',
+    "Mimas15"      : 'pcl3',
+    "StingrayOJ"   : 'pcl3',
+    "Pyramid15"   : 'pcl3',
+    "Copperhead"   : 'pcl3',
+    "CopperheadXLP"   : 'pcl3',
+    "Copperhead12"   : 'pcl3',
+    "CopperheadIPH"   : 'pcl3',
+    "CopperheadIPH15"   : 'pcl3',
+    "CopperheadIPH17"   : 'pcl3',
+    "PyramidRefresh15": 'pcl3',
+    "PyramidRefresh17": 'pcl3',
+    "Ampere"        : 'pcl3',
+    "Hbpl1"         : 'hbpl1',
+    "Kapan"         : 'pcl3',
+    "MimasTDR"      : 'pcl3',
+    "Saipan15B"     : 'pcl3',
+    "Gemstone"      : 'pcl3',
+    "SPDOfficejetProAsize" : 'pcl3',
+	"CLE"                  :'pcl3',
+    "SPDOfficejetProBsize" : 'pcl3',
+    "CLE17"                : 'pcl3',
+    "Mimas17"              : 'pcl3',
+    "P15_CISS"             : 'pcl3'
+   
 }
 
 PDL_TYPE_PCL = 0  # less preferred
 PDL_TYPE_PS = 1   #      /\
+PDL_TYPE_PDF = 1
 PDL_TYPE_HOST = 2 # more preferred (however, may req. plugin)
+
 
 PDL_TYPES = { # Used to prioritize PPD file selection in prnt.cups.getPPDFile2()
     'pcl3' : PDL_TYPE_PCL,
@@ -163,6 +227,7 @@ PDL_TYPES = { # Used to prioritize PPD file selection in prnt.cups.getPPDFile2()
     'pcl' : PDL_TYPE_PCL,
     'pclxl' : PDL_TYPE_PCL,
     'ps' : PDL_TYPE_PS,
+	'pdf' : PDL_TYPE_PDF,
     'lidil' : PDL_TYPE_HOST,
     'zjs' : PDL_TYPE_HOST,
     'zjstream' : PDL_TYPE_HOST,
@@ -172,6 +237,7 @@ PDL_TYPES = { # Used to prioritize PPD file selection in prnt.cups.getPPDFile2()
     'jpg' : PDL_TYPE_HOST,
     'jetready' : PDL_TYPE_HOST,
     'jr' : PDL_TYPE_HOST,
+    'hbpl1' : PDL_TYPE_HOST,
 }
 
 
@@ -200,6 +266,14 @@ TECH_SUBCLASSES = [
     "NoMaxDPI",
     "SmallMargins",
     "Trim",
+    "4800x1200dpi",
+    "Advanced",
+    "Mono",
+    "Color",
+    "Mono_Duplex",
+    "AutoDuplex",
+    "K10",
+    "CuHdIPH"
 ]
 
 TECH_SUBCLASSES.sort()
@@ -238,6 +312,12 @@ def normalizeModelUIName(model):
 
 
 def normalizeModelName(model):
+    if not isinstance(model, str):
+       try:
+           model = model.encode('utf-8')
+       except UnicodeEncodeError:
+          log.error("Failed to encode model = %s  type=%s "%(model,type(model)))
+
     return utils.xstrip(model.replace(' ', '_').replace('__', '_').replace('~','').replace('/', '_'), '_')
 
 
@@ -292,10 +372,8 @@ class ModelData:
             'power-settings': TYPE_INT,
             'pq-diag-type' : TYPE_INT,
             'r-type' : TYPE_INT,
-            'scan-style' : TYPE_INT,
             'scan-type' : TYPE_INT,
             'scan-src' : TYPE_INT,
-            'scan-color' : TYPE_INT,
             #'scan-duplex' : TYPE_BOOL,
             'status-battery-check' : TYPE_INT,
             'status-dynamic-counters' : TYPE_INT,
@@ -305,11 +383,14 @@ class ModelData:
             'support-type' : TYPE_INT,
             'support-ver' : TYPE_STR,
             'tech-class' : TYPE_LIST,
+            'family-class' : TYPE_LIST,
             'tech-subclass' : TYPE_LIST,
             'tech-type' : TYPE_INT,
             'usb-pid' : TYPE_HEX,
             'usb-vid' : TYPE_HEX,
             'wifi-config': TYPE_INT,
+            'ppd-name' : TYPE_STR,
+            'family-ppd' : TYPE_STR,
             }
 
         self.FIELD_TYPES_DYN = {
@@ -346,25 +427,25 @@ class ModelData:
             }
 
         self.RE_FIELD_TYPES = {
-            re.compile('^r(\d+)-agent(\d+)-kind', re.IGNORECASE) : TYPE_INT,
-            re.compile('^r(\d+)-agent(\d+)-type', re.IGNORECASE) : TYPE_INT,
-            re.compile('^r(\d+)-agent(\d+)-sku', re.IGNORECASE) : TYPE_STR,
-            re.compile('^agent(\d+)-desc', re.IGNORECASE) : TYPE_STR,
-            re.compile('^agent(\d+)-virgin', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^agent(\d+)-dvc', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-kind', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-type', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-id', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-hp-ink', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^agent(\d+)-health-desc', re.IGNORECASE) : TYPE_STR,
-            re.compile('^agent(\d+)-health$', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-known', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^agent(\d+)-level', re.IGNORECASE) : TYPE_INT,
-            re.compile('^agent(\d+)-ack', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^agent(\d+)-sku', re.IGNORECASE) : TYPE_STR,
-            re.compile('^in-tray(\d+)', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^out-tray(\d+)', re.IGNORECASE) : TYPE_BOOL,
-            re.compile('^model(\d+)', re.IGNORECASE) : TYPE_STR,
+            re.compile(r'^r(\d+)-agent(\d+)-kind', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^r(\d+)-agent(\d+)-type', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^r(\d+)-agent(\d+)-sku', re.IGNORECASE) : TYPE_STR,
+            re.compile(r'^agent(\d+)-desc', re.IGNORECASE) : TYPE_STR,
+            re.compile(r'^agent(\d+)-virgin', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^agent(\d+)-dvc', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-kind', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-type', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-id', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-hp-ink', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^agent(\d+)-health-desc', re.IGNORECASE) : TYPE_STR,
+            re.compile(r'^agent(\d+)-health$', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-known', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^agent(\d+)-level', re.IGNORECASE) : TYPE_INT,
+            re.compile(r'^agent(\d+)-ack', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^agent(\d+)-sku', re.IGNORECASE) : TYPE_STR,
+            re.compile(r'^in-tray(\d+)', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^out-tray(\d+)', re.IGNORECASE) : TYPE_BOOL,
+            re.compile(r'^model(\d+)', re.IGNORECASE) : TYPE_STR,
             }
 
         self.TYPE_CACHE = {}
@@ -397,8 +478,8 @@ class ModelData:
             cache = self.__cache
 
         try:
-            fd = file(filename)
-        except IOError, e:
+            fd = open(filename)
+        except IOError as e:
             log.error("I/O Error: %s (%s)" % (filename, e.strerror))
             return False
 
@@ -489,6 +570,24 @@ class ModelData:
 
             if self.read_section(self.released_dat, model):
                 return self.__cache[model]
+            else:
+                hp_model = "hp_"+model
+                if self.read_section(self.released_dat, hp_model):
+                    return self.__cache[hp_model]
+                else:
+                    log.debug("%s model not found"%hp_model)
+
+            if self.unreleased_dat is not None and os.path.exists(self.unreleased_dat):
+                log.debug("Reading file: %s" % self.unreleased_dat)
+
+                if self.read_section(self.unreleased_dat, model):
+                    return self.__cache[model]
+                else:
+                    hp_model = "hp_"+model
+                    if self.read_section(self.released_dat, hp_model):
+                        return self.__cache[hp_model]
+                    else:
+                        log.debug("%s model not found"%hp_model)
 
             if self.unreleased_dat is not None and os.path.exists(self.unreleased_dat):
                 log.debug("Reading file: %s" % self.unreleased_dat)
@@ -513,7 +612,7 @@ class ModelData:
                 try:
                     return self.TYPE_CACHE[key]
                 except KeyError:
-                    for pat, typ in self.RE_FIELD_TYPES.items():
+                    for pat, typ in list(self.RE_FIELD_TYPES.items()):
                         match = pat.match(key)
                         if match is not None:
                             self.TYPE_CACHE[key] = typ

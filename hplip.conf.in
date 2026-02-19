@@ -9,14 +9,17 @@ run=/var/run
 ppd=@abs_hpppddir@
 ppdbase=@abs_ppddir@
 doc=@abs_docdir@
+html=@abs_htmldir@
 icon=@icondir@
 cupsbackend=@cupsbackenddir@
 cupsfilter=@cupsfilterdir@
 drv=@abs_drvdir@
-
+bin=/usr/bin
+apparmor=@apparmordir@
 # Following values are determined at configure time and cannot be changed.
 [configure]
 network-build=@network_build@
+libusb01-build=@libusb01_build@
 pp-build=@pp_build@
 gui-build=@gui_build@
 scanner-build=@scan_build@
@@ -37,9 +40,11 @@ restricted-build=no
 ui-toolkit=@ui_toolkit@
 qt3=@qt3@
 qt4=@qt4@
+qt5=@qt5@
 policy-kit=@policykit@
-hpijs-only-build=@hpijs_only_build@
 lite-build=@lite_build@
-udev-acl-rules=@udev_acl_rules@
+udev_sysfs_rules=@udev_sysfs_rules@
 hpcups-only-build=@hpcups_only_build@
 hpijs-only-build=@hpijs_only_build@
+apparmor_build=@apparmor_build@
+class-driver=@class_driver@

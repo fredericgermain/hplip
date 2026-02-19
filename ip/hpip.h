@@ -1,6 +1,6 @@
 /* libhpojip -- HP OfficeJet image-processing library. */
 
-/* Copyright (C) 1995-2002 Hewlett-Packard Company
+/* Copyright (C) 1995-2002 HP Company
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -17,7 +17,7 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston,
  * MA 02111-1307, USA.
  *
- * In addition, as a special exception, Hewlett-Packard Company
+ * In addition, as a special exception, HP Company
  * gives permission to link the code of this program with any
  * version of the OpenSSL library which is distributed under a
  * license identical to that listed in the included LICENSE.OpenSSL
@@ -68,8 +68,17 @@ typedef unsigned short USHORT, *PUSHORT, FAR *LPUSHORT;
 typedef unsigned int DWORD, *PDWORD, FAR *LPDWORD;
 typedef unsigned int UINT, *PUINT, FAR *LPUINT;
 typedef unsigned long ULONG, *PULONG, FAR *LPULONG;
-typedef enum { FALSE=0, TRUE=1 } BOOL;
-typedef void VOID, *PVOID, FAR *LPVOID;
+#ifndef FALSE
+#define FALSE			0
+#endif
+#ifndef TRUE
+#define TRUE			1
+#endif
+typedef int				BOOL;
+//typedef enum { FALSE=0, TRUE=1 } BOOL;
+
+typedef void VOID;
+typedef void *PVOID, FAR *LPVOID;
 typedef long long int __int64;
 
 typedef struct {

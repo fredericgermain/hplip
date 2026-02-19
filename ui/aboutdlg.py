@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,8 +28,8 @@ from qt import *
 
 # Local
 from base.g import *
-from aboutdlg_base import AboutDlg_base
-from ui_utils import load_pixmap
+from .aboutdlg_base import AboutDlg_base
+from .ui_utils import load_pixmap
 
 
 class AboutDlg(AboutDlg_base):

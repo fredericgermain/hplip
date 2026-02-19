@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -35,11 +35,21 @@ import getopt
 import signal
 import time
 import operator
+import subprocess
+
 
 # Local
 from base.g import *
 import base.utils as utils
 from base import device, tui, module
+from base.sixext import to_unicode, to_string_utf8
+
+try:
+    from importlib import import_module
+except ImportError as e:
+    log.debug(e)
+    from base.utils import dyn_import_mod as import_module
+
 
 username = prop.username
 faxnum_list = []
@@ -49,7 +59,7 @@ prettyprint = False
 
 mod = module.Module(__mod__, __title__, __version__, __doc__, None,
                     (GUI_MODE, NON_INTERACTIVE_MODE),
-                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4))
+                    (UI_TOOLKIT_QT3, UI_TOOLKIT_QT4, UI_TOOLKIT_QT5))
 
 mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS | module.USAGE_FLAG_SUPRESS_G_DEBUG_FLAG,
     extra_options=[
@@ -89,8 +99,11 @@ if not prop.fax_build:
     log.error("Fax is disabled (turned off during build). Exiting")
     sys.exit(1)
 
-printer_name, device_uri = mod.getPrinterName(printer_name, device_uri,
-    filter={'fax-type': (operator.gt, 0)}, back_end_filter=['hpfax'])
+sts, printer_name, device_uri = mod.getPrinterName(printer_name, device_uri,
+         filter={'fax-type': (operator.gt, 0)}, back_end_filter=['hpfax'])
+
+if not sts:
+    sys.exit(1)
 
 if mode == GUI_MODE:
     if ui_toolkit == 'qt3':
@@ -188,18 +201,20 @@ if mode == GUI_MODE:
             pass
 
     else: # qt4
-        #try:
-        if 1:
-            from PyQt4.QtGui import QApplication
-            from ui4.sendfaxdialog import SendFaxDialog
-        #except ImportError:
-        if 0:
-            log.error("Unable to load Qt4 support. Is it installed?")
-            sys.exit(1)
+        # #try:
+        # if 1:
+        #     from PyQt4.QtGui import QApplication
+        #     from ui4.sendfaxdialog import SendFaxDialog
+        # #except ImportError:
+        # if 0:
+        #     log.error("Unable to load Qt4 support. Is it installed?")
+        #     sys.exit(1)
+
+        QApplication, ui_package = utils.import_dialog(ui_toolkit)
+        ui = import_module(ui_package + ".sendfaxdialog")
 
         app = QApplication(sys.argv)
-
-        dlg = SendFaxDialog(None, printer_name, device_uri, mod.args)
+        dlg = ui.SendFaxDialog(None, printer_name, device_uri, mod.args)
         dlg.show()
 
         try:
@@ -217,7 +232,10 @@ else: # NON_INTERACTIVE_MODE
         sys.exit(1)
 
     try:
-        import struct, Queue
+        import struct
+        from base.sixext.moves import queue
+        from base.sixext import PY3
+        from base.sixext import  to_unicode
         from prnt import cups
         from base import magic
 
@@ -285,7 +303,7 @@ else: # NON_INTERACTIVE_MODE
                     aa = db.get(a)
                     log.info("%s (fax number: %s)" % (a, aa['fax']))
 
-                print
+                print()
                 sys.exit(1)
 
         for p in recipient_list:
@@ -295,7 +313,7 @@ else: # NON_INTERACTIVE_MODE
                 log.debug("Name=%s Number=%s" % (a['name'], a['fax']))
 
         for p in faxnum_list:
-            phone_num_list.append({'fax': p, 'name': u'Unknown'})
+            phone_num_list.append({'fax': p, 'name': to_unicode('Unknown')})
             log.debug("Number=%s" % p)
 
         log.debug("Phone num list = %s" % phone_num_list)
@@ -304,6 +322,20 @@ else: # NON_INTERACTIVE_MODE
             mod.usage(error_msg=["No recipients specified. Please use -f, -r, and/or -g to specify recipients."])
 
         allowable_mime_types = cups.getAllowableMIMETypes()
+
+        # stat = ''
+        # try :
+        #     p = subprocess.Popen('getenforce', stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        #     stat, err = p.communicate()
+        #     stat = to_string_utf8(stat)
+        # except OSError :
+        #     pass
+        # except :
+        #     log.exception()
+        #     sys.exit(1)
+        # if stat.strip('\n') == 'Enforcing' :
+        #     log.error('Unable to add file. Please disable SeLinux.\nEither disable it manually or run hp-doctor from terminal.')
+        #     sys.exit(0)
 
         for f in mod.args:
             path = os.path.realpath(f)
@@ -329,7 +361,7 @@ else: # NON_INTERACTIVE_MODE
             ppd_file = cups.getPPD(printer_name)
 
             if ppd_file is not None and os.path.exists(ppd_file):
-                if file(ppd_file, 'r').read(8192).find('HP Fax') == -1:
+                if open(ppd_file, 'rb').read(8192).find(b'HP Fax') == -1:
                     log.error("Fax configuration error. The CUPS fax queue for '%s' is incorrectly configured. Please make sure that the CUPS fax queue is configured with the 'HP Fax' Model/Driver." % printer_name)
                     sys.exit(1)
 
@@ -349,14 +381,14 @@ else: # NON_INTERACTIVE_MODE
 
                 if mime_type == 'application/hplip-fax': # .g3
                     log.info("\nPreparing fax file %s..." % f)
-                    fax_file_fd = file(f, 'r')
+                    fax_file_fd = open(f, 'rb')
                     header = fax_file_fd.read(fax.FILE_HEADER_SIZE)
                     fax_file_fd.close()
 
                     mg, version, pages, hort_dpi, vert_dpi, page_size, \
                         resolution, encoding, reserved1, reserved2 = struct.unpack(">8sBIHHBBBII", header)
 
-                    if mg != 'hplip_g3':
+                    if mg != b'hplip_g3':
                         log.error("%s: Invalid file header. Bad magic." % f)
                         sys.exit(1)
 
@@ -393,6 +425,8 @@ else: # NON_INTERACTIVE_MODE
 
                         if printer_state == cups.IPP_PRINTER_STATE_IDLE:
                             log.debug("Printer name = %s file = %s" % (printer_name, path))
+                            path = to_unicode(path, 'utf-8')
+
                             sent_job_id = cups.printFile(printer_name, path, os.path.basename(path))
                             log.info("\nRendering file '%s' (job %d)..." % (path, sent_job_id))
                             log.debug("Job ID=%d" % sent_job_id)
@@ -426,7 +460,8 @@ else: # NON_INTERACTIVE_MODE
 
                         if fax_file:
                             log.debug("Fax file=%s" % fax_file)
-                            title = str(result[5])
+                            #title = str(result[5])
+                            title = result[5]
                             break
 
                         time.sleep(1)
@@ -437,7 +472,7 @@ else: # NON_INTERACTIVE_MODE
                         sys.exit(1)
 
                     # open the rendered file to read the file header
-                    f = file(fax_file, 'r')
+                    f = open(fax_file, 'rb')
                     header = f.read(fax.FILE_HEADER_SIZE)
 
                     if len(header) != fax.FILE_HEADER_SIZE:
@@ -466,12 +501,12 @@ else: # NON_INTERACTIVE_MODE
 
                 try:
                     dev.open()
-                except Error, e:
+                except Error as e:
                     log.warn(e.msg)
 
                 try:
                     dev.queryDevice(quick=True)
-                except Error, e:
+                except Error as e:
                     log.error("Query device error (%s)." % e.msg)
                     dev.error_state = ERROR_STATE_ERROR
 
@@ -490,8 +525,8 @@ else: # NON_INTERACTIVE_MODE
 
                 service.SendEvent(device_uri, printer_name, EVENT_START_FAX_JOB, prop.username, 0, '')
 
-                update_queue = Queue.Queue()
-                event_queue = Queue.Queue()
+                update_queue = queue.Queue()
+                event_queue = queue.Queue()
 
                 log.info("\nSending fax...")
 
@@ -509,7 +544,7 @@ else: # NON_INTERACTIVE_MODE
                         while update_queue.qsize():
                             try:
                                 status, page_num, phone_num = update_queue.get(0)
-                            except Queue.Empty:
+                            except queue.Empty:
                                 break
 
                             if status == fax.STATUS_IDLE:

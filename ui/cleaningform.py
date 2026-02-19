@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,11 +23,12 @@
 
 # Local
 from base.g import *
-from ui_utils import load_pixmap
+from base.sixext import  to_unicode
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from cleaningform_base import CleaningForm_base
+from .cleaningform_base import CleaningForm_base
 
 
 class CleaningForm(CleaningForm_base):
@@ -35,13 +36,13 @@ class CleaningForm(CleaningForm_base):
         CleaningForm_base.__init__(self, parent, name, modal, fl)
         self.dev = dev
 
-        text = unicode(self.CleaningText.text())
+        text = to_unicode(self.CleaningText.text())
         self.CleaningText.setText(text % str(cleaning_level + 1))
 
-        text = unicode(self.Continue.text())
+        text = to_unicode(self.Continue.text())
         self.Continue.setText(text % str(cleaning_level + 1))
 
-        text = unicode(self.CleaningTitle.text())
+        text = to_unicode(self.CleaningTitle.text())
         self.CleaningTitle.setText(text % str(cleaning_level))
 
         self.Icon.setPixmap(load_pixmap('clean.png', 'other'))

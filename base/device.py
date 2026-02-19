@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,7 +17,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Naga Samrat Chowdary Narla
 #
 
 # Std Lib
@@ -25,24 +26,34 @@ import re
 import gzip
 import os.path
 import time
-import urllib # TODO: Replace with urllib2 (urllib is deprecated in Python 3.0)
-import StringIO
-import httplib
+from .sixext.moves import urllib_request, urllib_parse, urllib_error
+import io
+from io import BytesIO
+from .sixext.moves import http_client
 import struct
-
+import string
+import time
 # Local
-from g import *
-from codes import *
-import utils
-import status
-import pml
+from .g import *
+from .codes import *
+from . import utils
+from . import services
+from . import os_utils
+from . import status
+from . import pml
+from . import status
 from prnt import pcl, ldl, cups
-import models, mdns, slp
-from strings import StringTable
+from . import models, mdns, slp, avahi
+from .strings import *
+from .sixext import PY3, to_bytes_utf8, to_unicode, to_string_latin, to_string_utf8, xStringIO
 
+http_result_pat = re.compile(r"""HTTP/\d.\d\s(\d+)""", re.I)
+
+HTTP_OK = 200
+HTTP_ERROR = 500
 
 try:
-    import hpmudext
+    hpmudext=utils.import_ext('hpmudext')
 except ImportError:
     if not os.getenv("HPLIP_BUILD"):
         log.error("HPMUDEXT could not be loaded. Please check HPLIP installation.")
@@ -76,7 +87,7 @@ DEFAULT_FILTER = None
 VALID_FILTERS = ('print', 'scan', 'fax', 'pcard', 'copy')
 DEFAULT_BE_FILTER = ('hp',)
 
-pat_deviceuri = re.compile(r"""(.*):/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*)|ip=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^&]*)|zc=(\S+))(?:&port=(\d))?""", re.IGNORECASE)
+pat_deviceuri = re.compile(r"""(.*):/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*)|ip=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}[^&]*)|zc=(\S+)|hostname=(\S+))(?:&port=(\d))?""", re.IGNORECASE)
 http_pat_url = re.compile(r"""/(.*?)/(\S*?)\?(?:serial=(\S*)|device=(\S*))&loc=(\S*)""", re.IGNORECASE)
 direct_pat = re.compile(r'direct (.*?) "(.*?)" "(.*?)" "(.*?)"', re.IGNORECASE)
 
@@ -91,21 +102,18 @@ ip_pat = re.compile(r"""\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25
 dev_pat = re.compile(r"""/dev/.+""", re.IGNORECASE)
 usb_pat = re.compile(r"""(\d+):(\d+)""", re.IGNORECASE)
 
-#
-# Event Wrapper Class for pipe IPC
-#
 
 class Event(object):
     def __init__(self, device_uri, printer_name, event_code,
                  username=prop.username, job_id=0, title='',
                  timedate=0):
 
-        self.device_uri = unicode(utils.xrstrip(device_uri, '\x00'))[:128].encode('utf-8')
-        self.printer_name = unicode(utils.xrstrip(printer_name, '\x00'))[:128].encode('utf-8')
+        self.device_uri = to_unicode(device_uri)
+        self.printer_name = to_unicode(printer_name)
         self.event_code = int(event_code)
-        self.username = unicode(utils.xrstrip(username, '\x00'))[:32].encode('utf-8')
+        self.username = to_unicode(username)
         self.job_id = int(job_id)
-        self.title = unicode(utils.xrstrip(title, '\x00'))[:128].encode('utf-8')
+        self.title = to_unicode(title)
 
         if timedate:
             self.timedate = float(timedate)
@@ -127,8 +135,8 @@ class Event(object):
 
 
     def pack_for_pipe(self):
-        return struct.pack(self.pipe_fmt, self.device_uri, self.printer_name,
-                self.event_code, self.username, self.job_id, self.title,
+        return struct.pack(self.pipe_fmt, self.device_uri.encode('utf-8'), self.printer_name.encode('utf-8'),
+                self.event_code, self.username.encode('utf-8'), self.job_id, self.title.encode('utf-8'),
                 self.timedate)
 
 
@@ -237,11 +245,11 @@ def init_dbus(dbus_loop=None):
                 session_bus = dbus.SessionBus()
             else:
                 session_bus = dbus.SessionBus(dbus_loop)
-        except dbus.exceptions.DBusException, e:
+        except dbus.exceptions.DBusException as e:
             if os.getuid() != 0:
-                log.error("Unable to connect to dbus session bus.")
+                log.error("Unable to connect to dbus session bus. %s "%e)
             else:
-                log.debug("Unable to connect to dbus session bus (running as root?)")
+                log.debug("Unable to connect to dbus session bus (running as root?). %s "%e)
 
             dbus_avail = False
             return dbus_avail, None,  None
@@ -250,7 +258,7 @@ def init_dbus(dbus_loop=None):
             log.debug("Connecting to com.hplip.StatusService (try #1)...")
             service = session_bus.get_object('com.hplip.StatusService', "/com/hplip/StatusService")
             dbus_avail = True
-        except dbus.exceptions.DBusException, e:
+        except dbus.exceptions.DBusException as e:
             try:
                 os.waitpid(-1, os.WNOHANG)
             except OSError:
@@ -278,7 +286,7 @@ def init_dbus(dbus_loop=None):
                     log.debug("Connecting to com.hplip.StatusService (try #%d)..." % t)
                     service = session_bus.get_object('com.hplip.StatusService', "/com/hplip/StatusService")
 
-                except dbus.exceptions.DBusException, e:
+                except dbus.exceptions.DBusException as e:
                     log.debug("Unable to connect to dbus. Is hp-systray running?")
                     t += 1
 
@@ -310,6 +318,7 @@ def makeURI(param, port=1):
         result_code, uri = hpmudext.make_par_uri(param)
 
         if result_code == hpmudext.HPMUD_R_OK and uri:
+            uri = to_string_utf8(uri)
             log.debug("Found: %s" % uri)
             found = True
             cups_uri = uri
@@ -325,6 +334,7 @@ def makeURI(param, port=1):
         result_code, uri = hpmudext.make_usb_uri(usb_bus_id, usb_dev_id)
 
         if result_code == ERROR_SUCCESS and uri:
+            uri = to_string_utf8(uri)
             log.debug("Found: %s" % uri)
             found = True
             cups_uri = uri
@@ -337,6 +347,7 @@ def makeURI(param, port=1):
         result_code, uri = hpmudext.make_net_uri(param, port)
 
         if result_code == hpmudext.HPMUD_R_OK and uri:
+            uri = to_string_utf8(uri)
             log.debug("Found: %s" % uri)
             found = True
             cups_uri = uri
@@ -346,14 +357,30 @@ def makeURI(param, port=1):
     else: # Try Zeroconf hostname
         log.debug("Trying ZC hostname %s" % param)
 
-        result_code, uri = hpmudext.make_zc_uri(param, port)
+        if ( len (param) < 251):
 
-        if result_code == hpmudext.HPMUD_R_OK and uri:
-            log.debug("Found: %s" % uri)
-            found = True
-            cups_uri = uri
-        else:
-            log.debug("Not found.")
+            result_code, uri = hpmudext.make_zc_uri(param, port)
+
+            if result_code == hpmudext.HPMUD_R_OK and uri:
+                uri = to_string_utf8(uri)
+                uri = uri.replace("ip=","hostname=")
+                log.debug("Found: %s" % uri)
+                found = True
+                cups_uri = uri
+
+            else: # Try DNS hostname
+                log.debug("Device not found using mDNS hostname. Trying with DNS hostname %s" % param)
+
+                result_code, uri = hpmudext.make_net_uri(param, port)
+
+                if result_code == hpmudext.HPMUD_R_OK and uri:
+                    uri = to_string_utf8(uri)
+                    uri = uri.replace("ip=","hostname=")
+                    log.debug("Found: %s" % uri)
+                    found = True
+                    cups_uri = uri
+                else:
+                    log.debug("Not found.")
 
     if not found:
         log.debug("Trying serial number %s" % param)
@@ -373,7 +400,7 @@ def makeURI(param, port=1):
                 mq = queryModelByURI(d)
 
                 result_code, device_id = \
-                    hpmudext.device_open(d, mq.get('io-mode', hpmudext.HPMUD_UNI_MODE))
+                    hpmudext.open_device(d, mq.get('io-mode', hpmudext.HPMUD_UNI_MODE))
 
                 if result_code == hpmudext.HPMUD_R_OK:
                     result_code, data = hpmudext.get_device_id(device_id)
@@ -391,7 +418,7 @@ def makeURI(param, port=1):
     if found:
         try:
             mq = queryModelByURI(cups_uri)
-        except Error, e:
+        except Error as e:
             log.error("Error: %s" % e.msg)
             cups_uri, sane_uri, fax_uri = '', '', ''
         else:
@@ -439,7 +466,7 @@ def queryModelByURI(device_uri):
 #
 
 def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
-                 ttl=4, filter=DEFAULT_FILTER,  search='', net_search='mdns',
+                 ttl=4, filter=DEFAULT_FILTER,  search='', net_search='slp',
                  back_end_filter=('hp',)):
 
     num_devices, ret_devices = 0, {}
@@ -461,14 +488,23 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
             if net_search == 'slp':
                 try:
                     detected_devices = slp.detectNetworkDevices(ttl, timeout)
-                except Error, socket.error:
-                    log.error("An error occured during network probe.")
+                except Error as socket_error:
+                    socket.error = socket_error
+                    log.error("An error occured during network probe.[%s]"%socket_error)
                     raise ERROR_INTERNAL
-            else:
+            elif net_search == 'avahi':
+                try:
+                    detected_devices = avahi.detectNetworkDevices(ttl, timeout)
+                except Error as socket_error:
+                    socket.error = socket_error
+                    log.error("An error occured during network probe.[%s]"%socket_error)
+                    raise ERROR_INTERNAL
+            else :#if net_search = 'mdns'
                 try:
                     detected_devices = mdns.detectNetworkDevices(ttl, timeout)
-                except Error, socket.error:
-                    log.error("An error occured during network probe.")
+                except Error as socket_error:
+                    socket.error = socket_error
+                    log.error("An error occured during network probe.[%s]"%socket_error)
                     raise ERROR_INTERNAL
 
             for ip in detected_devices:
@@ -485,16 +521,14 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
                             device_id = parseDeviceID(dev)
                             model = models.normalizeModelName(device_id.get('MDL', '?UNKNOWN?'))
 
-                            if num_ports_on_jd == 1:
-                                if net_search == 'slp':
+                            result_code, uri = hpmudext.make_net_uri(ip,num_ports_on_jd)
+                            if result_code == hpmudext.HPMUD_R_OK and uri:
+                                device_uri = to_string_utf8(uri)
+                            else:
+                                if num_ports_on_jd == 1:
                                     device_uri = 'hp:/net/%s?ip=%s' % (model, ip)
                                 else:
-                                    device_uri = 'hp:/net/%s?zc=%s' % (model, hn)
-                            else:
-                                if net_search == 'slp':
                                     device_uri = 'hp:/net/%s?ip=%s&port=%d' % (model, ip, (port + 1))
-                                else:
-                                    device_uri = 'hp:/net/%s?zc=%s&port=%d' % (model, hn, (port + 1))
 
                             include = True
                             mq = queryModelByModel(model)
@@ -520,7 +554,6 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
                 bn = hpmudext.HPMUD_BUS_USB
 
             result_code, data = hpmudext.probe_devices(bn)
-
             if result_code == hpmudext.HPMUD_R_OK:
                 for x in data.splitlines():
                     m = direct_pat.match(x)
@@ -531,6 +564,8 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
                     devid = m.group(4) or ''
 
                     log.debug(uri)
+                    #if("scanjet" in  mdl.lower()):
+                    #    continue # Do not include HP Scanjets
 
                     try:
                         back_end, is_hp, bb, model, serial, dev_file, host, zc, port = \
@@ -619,6 +654,7 @@ def probeDevices(bus=DEFAULT_PROBE_BUS, timeout=10,
 def getSupportedCUPSDevices(back_end_filter=['hp'], filter=DEFAULT_FILTER):
     devices = {}
     printers = cups.getPrinters()
+    log.debug(printers)
 
     for p in printers:
         try:
@@ -690,9 +726,8 @@ def getSupportedCUPSPrinters(back_end_filter=['hp'], filter=DEFAULT_FILTER):
                 include = __checkFilter(filter, mq)
 
             if include:
-                p.name = p.name.decode('utf-8')
                 printer_list.append(p)
-            #printer_list[p.name] = p.device_uri
+
 
     return printer_list # [ cupsext.Printer, ... ]
 
@@ -787,7 +822,6 @@ def parseDynamicCounter(ctr_field, convert_to_int=True):
 
 def parseDeviceURI(device_uri):
     m = pat_deviceuri.match(device_uri)
-
     if m is None:
         log.debug("Device URI %s is invalid/unknown" % device_uri)
         raise Error(ERROR_INVALID_DEVICE_URI)
@@ -804,9 +838,14 @@ def parseDeviceURI(device_uri):
     serial = m.group(4) or ''
     dev_file = m.group(5) or ''
     host = m.group(6) or ''
-    zc = ''
-    if not host:
-        zc = host = m.group(7) or ''
+    zc = m.group(7) or ''
+    hostname = m.group(8) or ''
+
+    if hostname:
+        host = hostname
+    elif zc:
+        host = zc
+
     port = m.group(8) or 1
 
     if bus == 'net':
@@ -837,7 +876,7 @@ def isNetwork(bus):
 #
 
 def __checkFilter(filter, mq):
-    for f, p in filter.items():
+    for f, p in list(filter.items()):
         if f is not None:
             op, val = p
             if not op(mq[f], val):
@@ -872,77 +911,6 @@ def validateFilterList(filter):
     return True
 
 
-#
-# UI String Queries (why is this here?)
-#
-
-inter_pat = re.compile(r"""%(.*)%""", re.IGNORECASE)
-st = StringTable()
-strings_init = False
-
-
-def initStrings():
-    global strings_init, st
-    strings_init = True
-    cycles = 0
-
-    while True:
-        found = False
-
-        for s in st.string_table:
-            short_string, long_string = st.string_table[s]
-            short_replace, long_replace = short_string, long_string
-
-            try:
-                short_match = inter_pat.match(short_string).group(1)
-            except (AttributeError, TypeError):
-                short_match = None
-
-            if short_match is not None:
-                found = True
-
-                try:
-                    short_replace, dummy = st.string_table[short_match]
-                except KeyError:
-                    log.error("String interpolation error: %s" % short_match)
-
-            try:
-                long_match = inter_pat.match(long_string).group(1)
-            except (AttributeError, TypeError):
-                long_match = None
-
-            if long_match is not None:
-                found = True
-
-                try:
-                    dummy, long_replace = st.string_table[long_match]
-                except KeyError:
-                    log.error("String interpolation error: %s" % long_match)
-
-            if found:
-                st.string_table[s] = (short_replace, long_replace)
-
-        if not found:
-            break
-        else:
-            cycles +=1
-            if cycles > 1000:
-                break
-
-
-def queryString(string_id, typ=0):
-    if not strings_init:
-        initStrings()
-
-    #log.debug("queryString(%s)" % string_id)
-    s = st.string_table.get(str(string_id), ('', ''))[typ]
-
-    if type(s) == type(''):
-        return s
-
-    return s()
-
-
 AGENT_types = { AGENT_TYPE_NONE        : 'invalid',
                 AGENT_TYPE_BLACK       : 'black',
                 AGENT_TYPE_BLACK_B8800 : 'black',
@@ -966,6 +934,8 @@ AGENT_types = { AGENT_TYPE_NONE        : 'invalid',
                 AGENT_TYPE_PG          : 'photo_gray',
                 AGENT_TYPE_C_M         : 'cyan_and_magenta',
                 AGENT_TYPE_K_Y         : 'black_and_yellow',
+                AGENT_TYPE_PHOTO_BLACK : 'photo_black',
+                AGENT_TYPE_MATTE_BLACK : 'matte_black',
                 AGENT_TYPE_UNSPECIFIED : 'unspecified', # Kind=5,6
             }
 
@@ -990,6 +960,7 @@ AGENT_healths = {AGENT_HEALTH_OK           : 'ok',
                   AGENT_HEALTH_OVERTEMP     : 'overtemp', # battery
                   AGENT_HEALTH_CHARGING     : 'charging', # battery
                   AGENT_HEALTH_DISCHARGING  : 'discharging', # battery
+                  AGENT_HEALTH_UNKNOWN      : 'unknown',
                 }
 
 
@@ -998,8 +969,6 @@ AGENT_levels = {AGENT_LEVEL_TRIGGER_MAY_BE_LOW : 'low',
                  AGENT_LEVEL_TRIGGER_ALMOST_DEFINITELY_OUT : 'out',
                }
 
-
-#
 
 
 
@@ -1041,6 +1010,7 @@ class Device(object):
                 raise Error(ERROR_DEVICE_NOT_FOUND)
 
         self.device_uri = device_uri
+        self.printer_name = printer_name
         self.callback = callback
         self.device_type = DEVICE_TYPE_UNKNOWN
 
@@ -1071,6 +1041,11 @@ class Device(object):
         self.model = models.normalizeModelName(self.model)
 
         log.debug("Model/UI model: %s/%s" % (self.model, self.model_ui))
+
+        if self.bus == 'net':
+            self.http_host = self.host
+        else:
+            self.http_host = 'localhost'  
 
         # TODO:
         #service.setAlertsEx(self.hpssd_sock)
@@ -1152,7 +1127,7 @@ class Device(object):
             try:
                 log.debug("Sending event %d to hpssd..." % event_code)
                 self.service.SendEvent(self.device_uri, printer_name, event_code, prop.username, job_id, title)
-            except dbus.exceptions.DBusException, e:
+            except dbus.exceptions.DBusException as e:
                 log.debug("dbus call to SendEvent() failed.")
 
 
@@ -1204,7 +1179,7 @@ class Device(object):
                 if result_code == hpmudext.HPMUD_R_DEVICE_BUSY:
                     log.error("Device busy: %s" % self.device_uri)
                 else:
-                    log.error("Unable to communicate with device (code=%d): %s" % (result_code, self.device_uri))
+                    log.debug("Unable to communicate with device (code=%d): %s" % (result_code, self.device_uri))
 
                 self.last_event = Event(self.device_uri, '', EVENT_ERROR_DEVICE_NOT_FOUND,
                         prop.username, 0, '', time.time())
@@ -1235,7 +1210,7 @@ class Device(object):
 
             if len(self.channels) > 0:
 
-                for c in self.channels.keys():
+                for c in list(self.channels.keys()):
                     self.__closeChannel(c)
 
             result_code = hpmudext.close_device(self.device_id)
@@ -1259,9 +1234,7 @@ class Device(object):
         except:
             log.error("unable to open channel")
             return -1
-
-        #if not self.mq['io-mode'] == IO_MODE_UNI:
-        if 1:
+        if not self.mq['io-mode'] == IO_MODE_UNI:
             service_name = service_name.upper()
 
             if service_name not in self.channels:
@@ -1296,6 +1269,12 @@ class Device(object):
     def openEWS_LEDM(self):
         return self.__openChannel(hpmudext.HPMUD_S_EWS_LEDM_CHANNEL)
 
+    def openLEDM(self):
+        return self.__openChannel(hpmudext.HPMUD_S_LEDM_SCAN)
+
+    def openMarvell_EWS(self):
+        return self.__openChannel(hpmudext.HPMUD_S_MARVELL_EWS_CHANNEL)
+
     def closePrint(self):
         return self.__closeChannel(hpmudext.HPMUD_S_PRINT_CHANNEL)
 
@@ -1319,6 +1298,12 @@ class Device(object):
 
     def closeEWS_LEDM(self):
         return self.__closeChannel(hpmudext.HPMUD_S_EWS_LEDM_CHANNEL)
+
+    def closeLEDM(self):
+        return self.__closeChannel(hpmudext.HPMUD_S_LEDM_SCAN)
+
+    def closeMarvell_EWS(self):
+        return self.__closeChannel(hpmudext.HPMUD_S_MARVELL_EWS_CHANNEL)
 
     def openCfgUpload(self):
         return self.__openChannel(hpmudext.HPMUD_S_CONFIG_UPLOAD_CHANNEL)
@@ -1368,6 +1353,9 @@ class Device(object):
 
     def getDeviceID(self):
         needs_close = False
+        self.raw_deviceID = ''
+        self.deviceID = {}
+
         if self.io_state != IO_STATE_HP_OPEN:
            try:
                self.open()
@@ -1377,10 +1365,7 @@ class Device(object):
 
         result_code, data = hpmudext.get_device_id(self.device_id)
 
-        if result_code != hpmudext.HPMUD_R_OK:
-            self.raw_deviceID = ''
-            self.deviceID = {}
-        else:
+        if result_code == hpmudext.HPMUD_R_OK:
             self.raw_deviceID = data
             self.deviceID = parseDeviceID(data)
 
@@ -1445,7 +1430,7 @@ class Device(object):
                 if self.dbus_avail:
                     try:
                         r_value = int(self.service.GetCachedIntValue(self.device_uri, 'r_value'))
-                    except dbus.exceptions.DBusException, e:
+                    except dbus.exceptions.DBusException as e:
                         log.debug("dbus call to GetCachedIntValue() failed.")
                         r_value = -1
 
@@ -1472,7 +1457,7 @@ class Device(object):
                                 if self.dbus_avail:
                                     try:
                                         self.service.SetCachedIntValue(self.device_uri, 'r_value', r_value)
-                                    except dbus.exceptions.DBusException, e:
+                                    except dbus.exceptions.DBusException as e:
                                         log.debug("dbus call to SetCachedIntValue() failed.")
                             else:
                                 log.error("Error attempting to read r-value (2).")
@@ -1499,7 +1484,7 @@ class Device(object):
                             if self.dbus_avail:
                                 try:
                                     self.service.SetCachedIntValue(self.device_uri, 'r_value', r_value)
-                                except dbus.exceptions.DBusException, e:
+                                except dbus.exceptions.DBusException as e:
                                     log.debug("dbus call to SetCachedIntValue() failed.")
 
                         else:
@@ -1524,7 +1509,7 @@ class Device(object):
                 if self.tech_type in (TECH_TYPE_MONO_INK, TECH_TYPE_COLOR_INK):
                     try:
                         self.getDeviceID()
-                    except Error, e:
+                    except Error as e:
                         log.error("Error getting device ID.")
                         self.last_event = Event(self.device_uri, '', ERROR_DEVICE_IO_ERROR,
                             prop.username, 0, '', time.time())
@@ -1654,7 +1639,7 @@ class Device(object):
             if self.tech_type in (TECH_TYPE_MONO_INK, TECH_TYPE_COLOR_INK):
                 try:
                     self.getDeviceID()
-                except Error, e:
+                except Error as e:
                     log.error("Error getting device ID.")
                     self.last_event = Event(self.device_uri, '', ERROR_DEVICE_IO_ERROR,
                         prop.username, 0, '', time.time())
@@ -1700,7 +1685,27 @@ class Device(object):
 
             elif status_type == STATUS_TYPE_LEDM:
                 log.debug("Type 10: LEDM")
-                status_block = status.StatusType10(self)
+                status_block = status.StatusType10(self.getEWSUrl_LEDM)
+
+            elif status_type == STATUS_TYPE_LEDM_FF_CC_0:
+                log.debug("Type 11: LEDM_FF_CC_0")
+                status_block = status.StatusType10(self.getUrl_LEDM)
+
+            elif status_type == STATUS_TYPE_IPP:
+                log.debug("Type 12: IPP")
+                status_block = status.StatusTypeIPP(self.device_uri,self.printer_name)
+
+            elif status_type == STATUS_TYPE_CDM:
+                log.debug("Type 13: CDM")
+                if self.is_local:
+                    status_block = status.StatusTypeCDM_USB(self.getUrl_CDM)
+                else:
+                    resource_url = "http://%s/cdm/supply/v1/suppliesPublic" % (self.host)
+                    if self.zc:
+                        retn, ip = hpmudext.get_zc_ip_address(self.zc)
+                        if retn == hpmudext.HPMUD_R_OK:
+                           resource_url = "http://%s/cdm/supply/v1/suppliesPublic" % (ip)
+                    status_block = status.StatusTypeCDM_Net(resource_url)
 
             else:
                 log.error("Unimplemented status type: %d" % status_type)
@@ -1724,21 +1729,6 @@ class Device(object):
 
 
             status_code = self.dq.get('status-code', STATUS_UNKNOWN)
-
-##            if not quick and \
-##                self.mq.get('fax-type', FAX_TYPE_NONE) and \
-##                status_code == STATUS_PRINTER_IDLE and \
-##                io_mode != IO_MODE_UNI:
-##
-##                log.debug("Fax activity check...")
-##
-##                tx_active, rx_active = status.getFaxStatus(self)
-##
-##                if tx_active:
-##                    status_code = STATUS_FAX_TX_ACTIVE
-##                elif rx_active:
-##                    status_code = STATUS_FAX_RX_ACTIVE
-
 
             self.error_state = STATUS_TO_ERROR_STATE_MAP.get(status_code, ERROR_STATE_CLEAR)
             self.error_code = status_code
@@ -1802,27 +1792,44 @@ class Device(object):
                                     'rr' : rr,
                                   })
 
+                #Check if device itself is sending the supplies info. If so, then in that case we need not check model.dat static data and
+                #compare with region, kind and type values.
+                dynamic_sku_data = False
+                for agent in agents:
+                    try:
+                        if agent['agent-sku'] != '':
+                            dynamic_sku_data = True
+                            break
+                    except:
+                        pass
+
                 a, aa = 1, 1
                 while True:
-                    mq_agent_kind = self.mq.get('r%d-agent%d-kind' % (r_value, a), -1)
-
-                    if mq_agent_kind == -1:
-                        break
-
-                    mq_agent_type = self.mq.get('r%d-agent%d-type' % (r_value, a), 0)
-                    mq_agent_sku = self.mq.get('r%d-agent%d-sku' % (r_value, a), '')
-
-                    found = False
-
-                    log.debug("Looking for kind=%d, type=%d..." % (mq_agent_kind, mq_agent_type))
-                    for agent in agents:
+                    if dynamic_sku_data:
+                        if a > len(agents):
+                            break
+                        agent = agents[a-1]
+                        mq_agent_sku = agent['agent-sku']
                         agent_kind = agent['kind']
                         agent_type = agent['type']
+                        found = True
+                    else:
+                        mq_agent_kind = self.mq.get('r%d-agent%d-kind' % (r_value, a), -1)
+                        if mq_agent_kind == -1:
+                            break
+                        mq_agent_type = self.mq.get('r%d-agent%d-type' % (r_value, a), 0)
+                        mq_agent_sku = self.mq.get('r%d-agent%d-sku' % (r_value, a), '')
+                        found = False
 
-                        if agent_kind == mq_agent_kind and \
-                           agent_type == mq_agent_type:
-                           found = True
-                           break
+                        log.debug("Looking for kind=%d, type=%d..." % (mq_agent_kind, mq_agent_type))
+                        for agent in agents:
+                            agent_kind = agent['kind']
+                            agent_type = agent['type']
+
+                            if agent_kind == mq_agent_kind and \
+                               agent_type == mq_agent_type:
+                                   found = True
+                                   break
 
                     if found:
                         log.debug("found: r%d-kind%d-type%d" % (r_value, agent_kind, agent_type))
@@ -1845,7 +1852,7 @@ class Device(object):
                         # if agent health is OK, check for low supplies. If low, use
                         # the agent level trigger description for the agent description.
                         # Otherwise, report the agent health.
-                        if (status_code == STATUS_PRINTER_IDLE or status_code == STATUS_PRINTER_OUT_OF_INK) and \
+                        if (status_code == STATUS_PRINTER_POWER_SAVE or status_code == STATUS_PRINTER_IDLE or status_code == STATUS_PRINTER_OUT_OF_INK) and \
                             (agent_health == AGENT_HEALTH_OK or
                              (agent_health == AGENT_HEALTH_FAIR_MODERATE and agent_kind == AGENT_KIND_HEAD)) and \
                             agent_level_trigger >= AGENT_LEVEL_TRIGGER_MAY_BE_LOW:
@@ -1990,10 +1997,8 @@ class Device(object):
 
     def getPML(self, oid, desired_int_size=pml.INT_SIZE_INT): # oid => ( 'dotted oid value', pml type )
         channel_id = self.openPML()
-
         result_code, data, typ, pml_result_code = \
             hpmudext.get_pml(self.device_id, channel_id, pml.PMLToSNMP(oid[0]), oid[1])
-
         if pml_result_code > pml.ERROR_MAX_OK:
             log.debug("PML/SNMP GET %s failed (result code = 0x%x)" % (oid[0], pml_result_code))
             return pml_result_code, None
@@ -2009,15 +2014,12 @@ class Device(object):
             else:
                 log.debug("PML/SNMP GET %s (result code = 0x%x) returned: %s" %
                     (oid[0], pml_result_code, repr(converted_data)))
-
         return pml_result_code, converted_data
 
 
     def setPML(self, oid, value): # oid => ( 'dotted oid value', pml type )
         channel_id = self.openPML()
-
         value = pml.ConvertToPMLDataFormat(value, oid[1])
-
         result_code, pml_result_code = \
             hpmudext.set_pml(self.device_id, channel_id, pml.PMLToSNMP(oid[0]), oid[1], value)
 
@@ -2026,10 +2028,9 @@ class Device(object):
 
                 log.debug("PML/SNMP SET %s (result code = 0x%x) to:" %
                     (oid[0], pml_result_code))
-                log.log_data(value)
             else:
                 log.debug("PML/SNMP SET %s (result code = 0x%x) to: %s" %
-                    (oid[0], pml_result_code, repr(value)))
+                    (oid[0], pml_result_code, repr(value.decode('utf-8'))))
 
         return pml_result_code
 
@@ -2108,6 +2109,12 @@ class Device(object):
     def readEWS_LEDM(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openEWS_LEDM, bytes_to_read, stream, timeout, allow_short_read)
 
+    def readLEDM(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
+        return self.__readChannel(self.openLEDM, bytes_to_read, stream, timeout, allow_short_read)
+
+    def readMarvell_EWS(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
+        return self.__readChannel(self.openMarvell_EWS, bytes_to_read, stream, timeout, allow_short_read)
+
     def readSoapFax(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openSoapFax, bytes_to_read, stream, timeout, allow_short_read)
 
@@ -2116,6 +2123,51 @@ class Device(object):
 
     def readWifiConfig(self, bytes_to_read, stream=None, timeout=prop.read_timeout, allow_short_read=True):
         return self.__readChannel(self.openWifiConfig, bytes_to_read, stream, timeout, allow_short_read)
+
+#Common handling of reading chunked or unchunked data from LEDM devices
+    def readLEDMData(dev, func, reply, timeout=6):
+
+        END_OF_DATA=to_bytes_utf8("0\r\n\r\n")
+        bytes_requested = 1024
+        bytes_remaining = 0
+        chunkedFlag = True
+
+        bytes_read = func(bytes_requested, reply, timeout)
+
+        for line in reply.getvalue().splitlines():
+            if line.lower().find(to_bytes_utf8("content-length")) != -1:
+                 bytes_remaining = int(line.split(to_bytes_utf8(":"))[1])
+                 chunkedFlag = False
+                 break
+
+        xml_data_start = reply.getvalue().find(to_bytes_utf8("<?xml"))
+        if (xml_data_start != -1):
+            bytes_remaining = bytes_remaining - (len(reply.getvalue())  - xml_data_start)
+
+        while bytes_read > 0:
+            temp_buf = xStringIO()
+            bytes_read = func(bytes_requested, temp_buf, timeout)
+
+            reply.write(temp_buf.getvalue())
+
+            if not chunkedFlag:     # Unchunked data
+                bytes_remaining = bytes_remaining - bytes_read
+                if bytes_remaining <= 0:
+                    break
+            elif END_OF_DATA == temp_buf.getvalue():   # Chunked data end
+                    break
+
+    def readLEDMAllData(dev, func, reply, timeout=6):
+        '''
+        Read any leftover response data from the previous session.
+        We read and disregard all such leftover data here to have a clean new session.
+        If we are getting a blank responses that means there is no more junk data. 
+        '''
+        while True:
+            bytes_read = func(1024, reply, timeout)
+            if bytes_read == 0:
+                break
+
 
     def __readChannel(self, opener, bytes_to_read, stream=None,
                       timeout=prop.read_timeout, allow_short_read=False):
@@ -2128,7 +2180,7 @@ class Device(object):
         num_bytes = 0
 
         if stream is None:
-            buffer = ''
+            buffer = to_bytes_utf8('')
 
         while True:
             result_code, data = \
@@ -2151,7 +2203,7 @@ class Device(object):
                 break
 
             if stream is None:
-                buffer = ''.join([buffer, data])
+                buffer = to_bytes_utf8('').join([buffer, data])
             else:
                 stream.write(data)
 
@@ -2191,6 +2243,12 @@ class Device(object):
     def writeEWS_LEDM(self, data):
         return self.__writeChannel(self.openEWS_LEDM, data)
 
+    def writeLEDM(self, data):
+        return self.__writeChannel(self.openLEDM, data)
+
+    def writeMarvell_EWS(self, data):
+        return self.__writeChannel(self.openMarvell_EWS, data)
+
     def writeCfgDownload(self, data):
         return self.__writeChannel(self.openCfgDownload, data)
 
@@ -2198,6 +2256,8 @@ class Device(object):
         return self.__writeChannel(self.openSoapFax, data)
 
     def writeMarvellFax(self, data):
+        if not isinstance(data, bytes) and hasattr(data, 'tobytes'):   # hasattr function used for supporting 2.6
+            data = data.tobytes()
         return self.__writeChannel(self.openMarvellFax, data)
 
     def writeWifiConfig(self, data):
@@ -2206,14 +2266,13 @@ class Device(object):
     def __writeChannel(self, opener, data):
         channel_id = opener()
         buffer, bytes_out, total_bytes_to_write = data, 0, len(data)
-
         log.debug("Writing %d bytes to channel %d (device-id=%d)..." % (total_bytes_to_write, channel_id, self.device_id))
 
         while len(buffer) > 0:
             result_code, bytes_written = \
-                hpmudext.write_channel(self.device_id, channel_id,
+                hpmudext.write_channel(self.device_id, channel_id, 
                     buffer[:prop.max_message_len])
-
+ 
             log.debug("Result code=%d" % result_code)
 
             if result_code != hpmudext.HPMUD_R_OK:
@@ -2243,10 +2302,54 @@ class Device(object):
                                                     value,
                                                     oid[1])))
 
-        log.log_data(data)
+        #log.log_data(data)
 
         self.printData(data, direct=direct, raw=True)
 
+    def post(self, url, post):
+        status_type = self.mq.get('status-type', STATUS_TYPE_NONE)
+        data = """POST %s HTTP/1.1\r
+Connection: Keep-alive\r
+User-agent: hplip/2.0\r
+Host: %s\r
+Content-type: text/xml\r
+Content-length: %d\r
+\r
+%s""" % (url, self.http_host, len(post), post)
+        log.log_data(data)
+        if status_type == STATUS_TYPE_LEDM:
+            log.debug("status-type: %d" % status_type)
+            self.writeEWS_LEDM(data)
+            response = BytesIO()
+
+            self.readLEDMData(self.readEWS_LEDM, response)
+
+            response = response.getvalue()
+            log.log_data(response)
+            self.closeEWS_LEDM()
+
+        elif status_type == STATUS_TYPE_LEDM_FF_CC_0:
+            log.debug("status-type: %d" % status_type)
+            self.writeLEDM(data)
+            response = BytesIO()
+
+            self.readLEDMData(self.readLEDM, response)
+
+            response = response.getvalue()
+            log.log_data(response)
+            self.closeLEDM()
+
+        else:
+            log.error("Not an LEDM status-type: %d" % status_type)
+
+        match = http_result_pat.match(to_string_utf8(response))
+        if match is None: return HTTP_OK
+        try:
+            code = int(match.group(1))
+        except (ValueError, TypeError):
+            code = HTTP_ERROR
+
+        return code == HTTP_OK
 
     def printGzipFile(self, file_name, printer_name=None, direct=False, raw=True, remove=False):
         return self.printFile(file_name, printer_name, direct, raw, remove)
@@ -2263,13 +2366,13 @@ class Device(object):
         f = gzip.open(print_file, 'r')
 
         x = f.readline()
-        while not x.startswith('%PY_BEGIN'):
+        while not x.startswith(to_bytes_utf8('%PY_BEGIN')):
             os.write(temp_file_fd, x)
             x = f.readline()
 
         sub_lines = []
         x = f.readline()
-        while not x.startswith('%PY_END'):
+        while not x.startswith(to_bytes_utf8('%PY_END')):
             sub_lines.append(x)
             x = f.readline()
 
@@ -2283,14 +2386,19 @@ class Device(object):
                  'DEVNODE' : self.dev_file,
                  }
 
-        if self.bus == 'net':
+        if self.bus == 'net' :
             SUBS['DEVNODE'] = 'n/a'
         else:
-            SUBS['IP'] = 'n/a'
+            SUBS['IP']= 'n/a'
             SUBS['PORT'] = 'n/a'
-
+        
+        if PY3:
+            sub_lines = [s.decode('utf-8') for s in sub_lines]
+        
+            
         for s in sub_lines:
-            os.write(temp_file_fd, s % SUBS)
+            os.write(temp_file_fd, to_bytes_utf8((s % SUBS)))
+        
 
         os.write(temp_file_fd, f.read())
         f.close()
@@ -2314,7 +2422,7 @@ class Device(object):
             if is_gzip:
                 self.writePrint(gzip.open(file_name, 'r').read())
             else:
-                self.writePrint(file(file_name, 'r').read())
+                self.writePrint(open(file_name, 'r').read())
 
         else:
             if not utils.which('lpr'):
@@ -2328,8 +2436,7 @@ class Device(object):
                 else:
                     c = 'lp -c -d%s %s %s' % (printer_name, lp_opt, file_name)
 
-                log.debug(c)
-                exit_code = os.system(c)
+                exit_code = os_utils.execute(c)
 
                 if exit_code != 0:
                     log.error("Print command failed with exit code %d!" % exit_code)
@@ -2347,8 +2454,7 @@ class Device(object):
                 else:
                     c = 'lpr -P%s %s %s %s' % (printer_name, raw_str, rem_str, file_name)
 
-                log.debug(c)
-                exit_code = os.system(c)
+                exit_code = os_utils.execute(c)
 
                 if exit_code != 0:
                     log.error("Print command failed with exit code %d!" % exit_code)
@@ -2360,8 +2466,6 @@ class Device(object):
 
 
     def printData(self, data, printer_name=None, direct=True, raw=True):
-        #log.log_data(data)
-        #log.debug("printData(direct=%s, raw=%s)" % (direct, raw))
         if direct:
             self.writePrint(data)
         else:
@@ -2384,7 +2488,7 @@ class Device(object):
         if self.dbus_avail:
             try:
                 device_uri, history = self.service.GetHistory(self.device_uri)
-            except dbus.exceptions.DBusException, e:
+            except dbus.exceptions.DBusException as e:
                 log.error("dbus call to GetHistory() failed.")
                 return []
 
@@ -2424,51 +2528,121 @@ class Device(object):
             opener = LocalOpener({})
             try:
                 f = opener.open(url2, data)
+                
             except Error:
                 log.error("Status read failed: %s" % url2)
                 stream.seek(0)
                 stream.truncate()
             else:
                 try:
-                    stream.write(f.read())
+                    stream.write(f.fp.read())
+                    #stream.write(f)
                 finally:
                     f.close()
 
         finally:
             self.closeEWS()
 
-    def getEWSUrl_LEDM(self, url, stream):
+    def getEWSUrl_LEDM(self, url, stream, footer=""):
         try:
-            if self.is_local:
-                url2 = "%s&loc=%s" % (self.device_uri.replace('hpfax:', 'hp:'), url)
-                data = self
-            else:
-                url2 = "http://%s%s" % (self.host, url)
-                if self.zc:
-                    status, ip = hpmudext.get_zc_ip_address(self.zc)
-                    if status == hpmudext.HPMUD_R_OK:
-                        url2 = "http://%s%s" % (ip, url)
-                data = None
-
-            log.debug("Opening: %s" % url2)
-            opener = LocalOpener_LEDM({})
+            url2 = "%s&loc=%s" % (self.device_uri.replace('hpfax:', 'hp:'), url)
+            data = self
+            opener = LocalOpenerEWS_LEDM({})
             try:
-                f = opener.open(url2, data)
+                if footer:
+                    return opener.open_hp(url2, data, footer)
+                else:
+                    return opener.open_hp(url2, data)
             except Error:
-                log.error("Status read failed: %s" % url2)
-                stream.seek(0)
-                stream.truncate()
-            else:
-                try:
-                    stream.write(f.read())
-                except AttributeError:
-                    stream.write(" ") 
-
-                if f is not " ":
-                    f.close()
-
+                log.debug("Status read failed: %s" % url2)
         finally:
             self.closeEWS_LEDM()
+
+    def getUrl_LEDM(self, url, stream, footer=""):
+        try:
+            url2 = "%s&loc=%s" % (self.device_uri.replace('hpfax:', 'hp:'), url)
+            data = self
+            opener = LocalOpener_LEDM({})
+            try:
+                if footer:
+                    return opener.open_hp(url2, data, footer)
+                else:
+                    return opener.open_hp(url2, data)
+            except Error:
+                log.debug("Status read failed: %s" % url2)
+
+        finally:
+            self.closeLEDM()
+
+    def getUrl_CDM(self, url, stream, footer=""):
+        try:
+            url="/cdm/supply/v1/suppliesPublic"
+            url2 = "%s&loc=%s" % (self.device_uri.replace('hpfax:', 'hp:'), url)
+            data = self
+            opener = LocalOpener_CDM({})
+            try:
+                if footer:
+                    return opener.open_hp(url2, data, footer)
+                else:
+                    return opener.open_hp(url2, data)
+            except Error:
+                log.debug("Status read failed: %s" % url2)
+        finally:
+            self.closeLEDM()
+            
+    def FetchLEDMUrl(self, url, footer=""):
+        data_fp = BytesIO()
+        if footer:
+            data = self.getUrl_LEDM(url, data_fp, footer)
+        else:
+            data = self.getUrl_LEDM(url, data_fp)
+        if data:
+            data = data.split(to_bytes_utf8('\r\n\r\n'), 1)[1]
+            if data:
+                data = status.ExtractXMLData(data)
+        return data
+
+#-------------------------For LEDM SOAP PROTOCOL(FAX) Devices----------------------------------------------------------------------#
+
+    def FetchEWS_LEDMUrl(self, url, footer=""):
+        data_fp = BytesIO()
+        if footer:
+            data = self.getEWSUrl_LEDM(url, data_fp, footer)
+        else:
+            data = self.getEWSUrl_LEDM(url, data_fp)
+        if data:
+            data = data.split(to_bytes_utf8('\r\n\r\n'), 1)[1]
+            if data:
+                data = status.ExtractXMLData(data)
+        return data
+
+    def readAttributeFromXml_EWS(self, uri, attribute):
+        stream = BytesIO()
+        data = self.FetchEWS_LEDMUrl(uri)
+        if not data:
+            log.error("Unable To read the XML data from device")
+            return ""
+        xmlDict = utils.XMLToDictParser().parseXML(data)
+
+        try:
+            return xmlDict[attribute]
+        except:
+            return str("")
+
+#---------------------------------------------------------------------------------------------------#
+
+    def readAttributeFromXml(self,uri,attribute):
+        stream = BytesIO()
+        data = self.FetchLEDMUrl(uri)
+        if not data:
+            log.error("Unable To read the XML data from device")
+            return ""
+        xmlDict = utils.XMLToDictParser().parseXML(data )
+        try:
+            return xmlDict[attribute]
+        except:
+            return str("")
+
 
     def downloadFirmware(self, usb_bus_id=None, usb_device_id=None): # Note: IDs not currently used
         ok = False
@@ -2490,7 +2664,7 @@ class Device(object):
                     os.close(f)
                     ok = True
                     log.debug("OK")
-                except (OSError, IOError), e:
+                except (OSError, IOError) as e:
                     log.error("An error occured: %s" % e)
             else:
                 try:
@@ -2500,7 +2674,7 @@ class Device(object):
                     self.closePrint()
                     ok = True
                     log.debug("OK")
-                except Error, e:
+                except Error as e:
                     log.error("An error occured: %s" % e.msg)
         else:
             log.error("Firmware file '%s' not found." % filename)
@@ -2508,15 +2682,12 @@ class Device(object):
         return ok
 
 
-# ********************************** Support classes/functions
 
+    
 
-class xStringIO(StringIO.StringIO):
-    def makefile(self, x, y):
-        return self
 
 # URLs: hp:/usb/HP_LaserJet_3050?serial=00XXXXXXXXXX&loc=/hp/device/info_device_status.xml
-class LocalOpener(urllib.URLopener):
+class LocalOpener(urllib_request.URLopener):
     def open_hp(self, url, dev):
         log.debug("open_hp(%s)" % url)
 
@@ -2531,53 +2702,86 @@ class LocalOpener(urllib.URLopener):
         dev.writeEWS("""GET %s HTTP/1.0\nContent-Length:0\nHost:localhost\nUser-Agent:hplip\n\n""" % loc)
 
         reply = xStringIO()
-
         while dev.readEWS(8192, reply, timeout=1):
             pass
 
         reply.seek(0)
         log.log_data(reply.getvalue())
-
-        response = httplib.HTTPResponse(reply)
+        
+        response = http_client.HTTPResponse(reply)
         response.begin()
 
-        if response.status != httplib.OK:
+        if response.status != http_client.OK:
             raise Error(ERROR_DEVICE_STATUS_NOT_AVAILABLE)
         else:
-            return response.fp
+            return response#.fp
 
 # URLs: hp:/usb/HP_OfficeJet_7500?serial=00XXXXXXXXXX&loc=/hp/device/info_device_status.xml
-class LocalOpener_LEDM(urllib.URLopener):
-    def open_hp(self, url, dev):
+class LocalOpenerEWS_LEDM(urllib_request.URLopener):
+    def open_hp(self, url, dev, foot=""):
         log.debug("open_hp(%s)" % url)
 
         match_obj = http_pat_url.search(url)
-        bus = match_obj.group(1) or ''
-        model = match_obj.group(2) or ''
-        serial = match_obj.group(3) or ''
-        device = match_obj.group(4) or ''
-        loc = match_obj.group(5) or ''
+        loc = url.split("=")[url.count("=")]
 
         dev.openEWS_LEDM()
-        dev.writeEWS_LEDM("""GET %s HTTP/1.1\nContent-Length:0\nHost:localhost\nUser-Agent:hplip\n\n""" % loc)
+        if foot:
+            if "PUT" in foot:
+                dev.writeEWS_LEDM("""%s""" % foot)
+            else:
+                dev.writeEWS_LEDM("""POST %s HTTP/1.1\r\nContent-Type:text/xml\r\nContent-Length:%s\r\nAccept-Encoding: UTF-8\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n """ % (loc, len(foot)))
+                dev.writeEWS_LEDM("""%s""" % foot)
+        else:
+            dev.writeEWS_LEDM("""GET %s HTTP/1.1\r\nAccept: text/plain\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n""" % loc)
 
         reply = xStringIO()
 
-        while dev.readEWS_LEDM(8080, reply, timeout=1):
-            pass
+        dev.readLEDMData(dev.readEWS_LEDM,reply)
 
         reply.seek(0)
-        log.log_data(reply.getvalue())
+        return reply.getvalue()
 
-        response = httplib.HTTPResponse(reply)
-        try:
-            response.begin()
-        except httplib.BadStatusLine:
-            response.status = httplib.OK
-            response.fp = " "
 
-        if response.status != httplib.OK:
-            raise Error(ERROR_DEVICE_STATUS_NOT_AVAILABLE)
+# URLs: hp:/usb/HP_OfficeJet_7500?serial=00XXXXXXXXXX&loc=/hp/device/info_device_status.xml
+class LocalOpener_LEDM(urllib_request.URLopener):
+    def open_hp(self, url, dev, foot=""):
+        log.debug("open_hp(%s)" % url)
+
+        match_obj = http_pat_url.search(url)
+        loc = url.split("=")[url.count("=")]
+
+        dev.openLEDM()
+        if foot:
+            if "PUT" in foot:
+                dev.writeLEDM("""%s""" % foot)
+            else:
+                dev.writeLEDM("""POST %s HTTP/1.1\r\nContent-Type:text/xml\r\nContent-Length:%s\r\nAccept-Encoding: UTF-8\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n """ % (loc, len(foot)))
+                dev.writeLEDM("""%s""" % foot)
         else:
-            return response.fp
+            dev.writeLEDM("""GET %s HTTP/1.1\r\nAccept: text/plain\r\nHost:localhost\r\nUser-Agent:hplip\r\n\r\n""" % loc)
 
+        reply = xStringIO()
+
+       
+        dev.readLEDMData(dev.readLEDM,reply)
+
+        reply.seek(0)
+        return reply.getvalue()
+
+
+# URLs: hp:/usb/HP_OfficeJet_7500?serial=00XXXXXXXXXX&loc=/hp/device/info_device_status.xml
+class LocalOpener_CDM(urllib_request.URLopener):
+    def open_hp(self, url, dev, foot=""):
+        log.debug("open_hp(%s)" % url)
+        match_obj = http_pat_url.search(url)
+        loc = url.split("=")[url.count("=")]
+        dev.openEWS_LEDM()
+        dev.writeEWS_LEDM("""GET %s HTTP/1.1\r\nContent-Type: application/json\r\nUser-Agent: hplip\r\nAccept: */*\r\nCache-Control: no-cache\r\nHost:localhost\r\nConnection: keep-alive\r\nContent-Length: %s\r\n\r\n"""%(loc,len(loc)))
+        reply = xStringIO()
+        dev.readLEDMData(dev.readEWS_LEDM,reply)        
+        reply.seek(0)
+        response = http_client.HTTPResponse(reply)
+        response.begin()
+        respcode = response.getcode()
+        data = response.read()
+        return data

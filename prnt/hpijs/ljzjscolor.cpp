@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ljzjscolor.cpp : Implementation for the LJZjsColor class
 
-  Copyright (c) 1996 - 2006, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -39,6 +39,8 @@
 #include "ljzjscolor.h"
 
 APDK_BEGIN_NAMESPACE
+
+#define LJZJSCOLOR2DEVICESCOUNT 8
 
 extern uint32_t ulMapGRAY_K_6x6x1[9 * 9 * 9];
 
@@ -79,6 +81,9 @@ LJZjsColor::LJZjsColor (SystemServices* pSS, int numfonts, BOOL proto)
     m_iP[0] = 3;
     m_bIamColor = TRUE;
     m_iPrinterType = eLJZjsColor;
+
+	/*Checking for LJZjsColor-2 format Printers*/
+	m_bLJZjsColor2Printer = IsLJZjsColor2Printer(pSS);
 }
 
 LJZjsColor::~LJZjsColor ()
@@ -191,6 +196,7 @@ LJZjsColorNormalColorMode::LJZjsColorNormalColorMode ()
 
 DRIVER_ERROR LJZjsColor::Encapsulate (const RASTERDATA *pRasterData, BOOL bLastPlane)
 {
+	DRIVER_ERROR err = NO_ERROR;
     if( m_cmColorMode == COLOR )
     {
         if (pRasterData != NULL)
@@ -233,9 +239,16 @@ DRIVER_ERROR LJZjsColor::Encapsulate (const RASTERDATA *pRasterData, BOOL bLastP
 
     if (m_dwCurrentRaster == m_dwLastRaster)
     {
-        JbigCompress ();
+		if(TRUE == m_bLJZjsColor2Printer)
+		{
+			err = JbigCompress_LJZjsColor2 ();
+		}
+		else
+		{
+			err = JbigCompress();
+		}
     }
-    return NO_ERROR;
+    return err;
 }
 
 DRIVER_ERROR LJZjsColor::EndPage ()
@@ -260,7 +273,29 @@ DRIVER_ERROR LJZjsColor::EndPage ()
     return err;
 }
 
+/*
+SendPlaneData
+Description: Call the appropriate SendPlaneData based on whether its LJZjsColor-2 printer or not
+Arguments:
+se: Not used for LJZjsColor-2 printer. Otherwise used to send header for last stride
+pcBuff: Pointer to struct having Compressed Data and size
+bLastStride: Last scan line. Not used for LJZjsColor-2 printer. Used to send header otherwise.
+*/
 DRIVER_ERROR LJZjsColor::SendPlaneData (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride)
+{
+	DRIVER_ERROR        err = NO_ERROR;
+	if(TRUE == m_bLJZjsColor2Printer)
+	{
+		err = SendPlaneData_LJZjsColor2 (iPlaneNumber,se, pcBuff,bLastStride);
+	}
+	else
+	{
+		err = SendPlaneData_LJZjsColor (iPlaneNumber, se, pcBuff, bLastStride);
+	}
+	return err;
+}
+
+DRIVER_ERROR LJZjsColor::SendPlaneData_LJZjsColor (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride)
 {
     DRIVER_ERROR        err = NO_ERROR;
     BYTE                szStr[256];
@@ -354,6 +389,107 @@ DRIVER_ERROR LJZjsColor::SendPlaneData (int iPlaneNumber, HPLJZjsJbgEncSt *se, H
     return err;
 }
 
+
+
+/*SendPlaneData for LJZjsColor-2 printer
+Description: Send the compressed data for the particular plane. Data sent in chunks of max size 64k
+or 0x10000
+Arguments:
+se: Not used for LJZjsColor-2 printer
+pcBuff: Pointer to struct having Compressed Data and size
+bLastStride: Last scan line. Not used for LJZjsColor-2 printer.
+*/
+DRIVER_ERROR LJZjsColor::SendPlaneData_LJZjsColor2 (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride)
+{
+    DRIVER_ERROR	err = NO_ERROR;
+    BYTE			szStr[256];			/*Buffer to send commands*/
+    
+    BYTE			*pbJBigData = NULL;
+    
+    DWORD			dwDataSize = 0;				/*Holds the total size of compressed bytes to Send*/
+	DWORD			dwMaxChunkSize = 0x10000;	/*1 chunk can send 64k bytes. 64k = 0x10000*/
+	DWORD			dwCurrentChunkSize = 0;
+	DWORD			dwLoopCount = 0;
+
+	int				iPadCount = 0;
+	int				nByteCount = 0;
+
+	bool			bLastChunk = FALSE;
+    
+	memset (szStr, 0, sizeof(szStr));
+	
+	/*Start Plane with item Plane*/
+    nByteCount = SendChunkHeader (szStr, 28, ZJT_START_PLANE, 1);
+	nByteCount += SendItem (szStr+nByteCount, ZJIT_UINT32, ZJI_PLANE,iPlaneNumber);
+	
+	/**** Send JBIG header info ****/
+	nByteCount += SendChunkHeader (szStr+nByteCount, 36, ZJT_JBIG_BIH, 0);
+	err = Send ((const BYTE *) szStr, nByteCount);
+    ERRCHECK;
+
+	pbJBigData = pcBuff->pszCompressedData;
+	err = Send ((const BYTE *) pbJBigData, 20);
+    ERRCHECK;
+    
+	pbJBigData += 20;/*First 20 bytes was JBIG header which is done*/
+	pcBuff->dwTotalSize -= 20;
+    
+   
+    if (pcBuff->dwTotalSize % 4) /*Make Data DWORD aligned by padding if reqd.*/
+    {
+        iPadCount = ((pcBuff->dwTotalSize / 4 + 1) * 4) - pcBuff->dwTotalSize;
+    }
+
+    dwDataSize = pcBuff->dwTotalSize;
+
+	/*Send the Compressed Data in chunks of 0x10000 (~64k)*/
+	for(dwLoopCount = 0; dwLoopCount < dwDataSize ; dwLoopCount +=dwMaxChunkSize)
+	{
+		memset (szStr, 0, sizeof(szStr));
+		dwCurrentChunkSize = dwMaxChunkSize;
+		
+		if(dwLoopCount+dwCurrentChunkSize > dwDataSize)
+		{
+			dwCurrentChunkSize = dwDataSize - (dwLoopCount);
+			bLastChunk = TRUE;
+		}
+		if (!bLastChunk)
+		{
+			nByteCount = SendChunkHeader (szStr, dwCurrentChunkSize + 16, ZJT_JBIG_HID, 0);
+		}
+		else /*For last chunk add the pad count size and send header*/
+		{
+			nByteCount = SendChunkHeader (szStr, dwCurrentChunkSize + 16 + iPadCount, ZJT_JBIG_HID, 0);			
+		}
+		err = Send ((const BYTE *) szStr, nByteCount);
+		ERRCHECK;
+
+		err = Send ((const BYTE *) pbJBigData, dwCurrentChunkSize);
+		ERRCHECK;
+		
+		pbJBigData+=dwCurrentChunkSize;
+	}
+	if(iPadCount != 0)
+	{
+		memset (szStr, 0, iPadCount);
+		err = Send ((const BYTE *) szStr, iPadCount);
+	}
+
+	memset (szStr, 0, sizeof(szStr));
+	
+	/*End JBig and then End Plane with item Plane*/
+	
+	nByteCount = SendChunkHeader (szStr, 16, ZJT_END_JBIG, 0);
+
+	nByteCount += SendChunkHeader (szStr+nByteCount, 28, ZJT_END_PLANE, 1);
+	nByteCount += SendItem (szStr+nByteCount, ZJIT_UINT32, ZJI_PLANE,iPlaneNumber);
+
+	err = Send ((const BYTE *) szStr, nByteCount);
+	ERRCHECK;
+
+    return err;
+}
+
 DRIVER_ERROR LJZjsColor::VerifyPenInfo()
 {
     ePen = BOTH_PENS;
@@ -365,6 +501,39 @@ DRIVER_ERROR LJZjsColor::ParsePenInfo (PEN_TYPE& ePen, BOOL QueryPrinter)
     ePen = BOTH_PENS;
 
     return NO_ERROR;
+}
+
+bool LJZjsColor::IsLJZjsColor2Printer(SystemServices* pSS)
+{
+	if (pSS == NULL)
+		return false;
+	char szLJZjsColor2ModelNames[LJZJSCOLOR2DEVICESCOUNT][25] = {
+		"HP LaserJet CP1025\0",
+		"HP LaserJet CP1021\0",
+		"HP LaserJet CP1022\0",
+		"HP LaserJet CP1023\0",
+		"HP LaserJet CP1025nw\0",
+		"HP LaserJet CP1026nw\0",
+		"HP LaserJet CP1027nw\0",
+		"HP LaserJet CP1028nw\0"
+	};	//Device models that follow LJZjsColor-2 encapsulation format
+
+	BYTE strDeviceID[DevIDBuffSize];
+	DRIVER_ERROR err;
+	bool bLJZjsColor2Printer = FALSE;
+	err = pSS->GetDeviceID(strDeviceID,DevIDBuffSize,FALSE);
+
+	for(int i=0; i< LJZJSCOLOR2DEVICESCOUNT; i++)
+	{
+		if( NO_ERROR == err &&
+			(strnlen((const char*)strDeviceID, DevIDBuffSize)< DevIDBuffSize) && 
+			(strstr((const char*)strDeviceID, (const char*)szLJZjsColor2ModelNames[i])))
+		{
+			bLJZjsColor2Printer = TRUE;
+			break;
+		}
+	}
+	return bLJZjsColor2Printer;
 }
 
 APDK_END_NAMESPACE

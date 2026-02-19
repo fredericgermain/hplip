@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,20 +21,21 @@
 
 # Std Lib
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils
 from prnt import cups
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from firmwaredialog_base import Ui_Dialog
+from .firmwaredialog_base import Ui_Dialog
 
 
 class FirmwareDialog(QDialog, Ui_Dialog):
@@ -53,6 +54,7 @@ class FirmwareDialog(QDialog, Ui_Dialog):
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_currentChanged"), self.DeviceUriComboBox_currentChanged)
         self.connect(self.CancelButton, SIGNAL("clicked()"), self.close)
         self.connect(self.DownloadFirmwareButton, SIGNAL("clicked()"), self.downloadFirmware)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         # Application icon
         self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))

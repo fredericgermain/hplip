@@ -3,7 +3,7 @@
 
   marvelli.h - HP SANE backend support for Marvell based multi-function peripherals
 
-  (c) 2008 Copyright Hewlett-Packard Development Company, LP
+  (c) 2008 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,15 +21,20 @@
   COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER 
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+  
+  Author: David Suffield, Yashwant Sahu, Sarbeswar Meher  
 
 \************************************************************************************/
 
 #ifndef _MARVELLI_H
 #define _MARVELLI_H
 
-#define MARVELL_CONTRAST_MIN -127
-#define MARVELL_CONTRAST_MAX 127
-#define MARVELL_CONTRAST_DEFAULT 0
+#define MARVELL_CONTRAST_MIN 1
+#define MARVELL_CONTRAST_MAX 11
+#define MARVELL_CONTRAST_DEFAULT 6
+#define MARVELL_BRIGHTNESS_MIN 0
+#define MARVELL_BRIGHTNESS_MAX 200
+#define MARVELL_BRIGHTNESS_DEFAULT 6
 
 #define MM_PER_INCH     25.4
 
@@ -42,6 +47,7 @@ enum MARVELL_OPTION_NUMBER
                    MARVELL_OPTION_INPUT_SOURCE,     /* platen, ADF */ 
    MARVELL_OPTION_GROUP_ADVANCED,
                    MARVELL_OPTION_CONTRAST,
+                   MARVELL_OPTION_BRIGHTNESS,
    MARVELL_OPTION_GROUP_GEOMETRY,
                    MARVELL_OPTION_TL_X,
                    MARVELL_OPTION_TL_Y,
@@ -68,6 +74,12 @@ enum INPUT_SOURCE
    IS_MAX,
 };
 
+enum MARVELL_VERSION
+{
+    MARVELL_1 = 1,
+    MARVELL_2,
+};
+
 struct marvell_session
 {
    char *tag;  /* handle identifier */
@@ -76,7 +88,7 @@ struct marvell_session
    char uri[HPMUD_LINE_SIZE];
    char model[HPMUD_LINE_SIZE];
    int scan_type;
-
+   int is_user_cancel;
    IP_IMAGE_TRAITS image_traits;   /* specified by image processor */      
 
    SANE_Option_Descriptor option[MARVELL_OPTION_MAX];
@@ -94,13 +106,18 @@ struct marvell_session
 
    SANE_Range contrast_range;
    SANE_Int current_contrast;
+   SANE_Range brightnessRange;
+   SANE_Int currentBrightness;
 
    SANE_Range tlxRange, tlyRange, brxRange, bryRange;
    SANE_Fixed currentTlx, currentTly, currentBrx, currentBry;
    SANE_Fixed effectiveTlx, effectiveTly, effectiveBrx, effectiveBry;
    SANE_Fixed min_width, min_height;
 
-   IP_HANDLE ip_handle;
+    SANE_Int platen_resolution_list[MAX_LIST_SIZE];
+    SANE_Int adf_resolution_list[MAX_LIST_SIZE];
+
+    IP_HANDLE ip_handle;
 
    int cnt;                   /* number bytes available in buf[] */ 
    unsigned char buf[32768];  /* line buffer (max = 1200dpi * 8.5inches * 3pixels) */
@@ -119,7 +136,7 @@ struct marvell_session
 /* Add new elements here. */
    void *math_handle;         /* returned by dlopen */
    enum HPMUD_SCANSRC scansrc;       /* 0=NA */
-   enum HPMUD_SCANCOLOR scancolor;       /* 0=NA*/
+   enum MARVELL_VERSION version;
 };
 
 #endif  // _MARVELLI_H

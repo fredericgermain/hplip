@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,9 +20,10 @@
 #
 
 from base.g import *
+from base.sixext import  to_unicode
 
 from qt import *
-from setupmanualfind_base import SetupManualFind_base
+from .setupmanualfind_base import SetupManualFind_base
 
 class SetupManualFind(SetupManualFind_base):
     def __init__(self, bus, parent=None, name=None, modal=0, fl = 0):
@@ -47,7 +48,7 @@ class SetupManualFind(SetupManualFind_base):
             self.findTextLabel.setText(self.__tr("""Device Node:"""))
 
     def findLineEdit_textChanged(self,a0):
-        self.param = unicode(a0)
+        self.param = to_unicode(a0)
 
         if self.bus == 'usb':
             bus, dev = self.param.split(':')

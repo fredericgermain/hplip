@@ -1,7 +1,7 @@
 /*****************************************************************************\
   djgenericvip.h : Interface for the generic VIP printer class
 
-  Copyright (c) 2001 - 2006, Hewlett-Packard Co.
+  Copyright (c) 2001 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -159,6 +159,8 @@ public:
         "Deskjet F42\0"
         "Deskjet F44\0"
         "Deskjet F45\0"
+        "Deskjet 2050 J510\0"
+        "Deskjet 1050 J410\0"
         "Business Inkjet 1000\0"
         "hp business inkjet 1100\0"
         "HP Business Inkjet 1200\0"
@@ -193,6 +195,9 @@ public:
         "PSC 2350\0"
         "psc 2400\0"
         "psc 2500\0"
+        "Officejet 4400 K410\0"
+        "Officejet 4500 All-in-One Printer - K710\0"
+        "Officejet 4500 G510\0"
         "Officejet 6000 E609\0"
         "Officejet 6500 E709\0"
         "Officejet 7000 E809\0"
@@ -263,7 +268,10 @@ public:
         "Photosmart D73\0"
         "Photosmart D74\0"
         "Photosmart D73\0"
+        "Photosmart D110\0"
         "Photosmart Wireless B109\0"
+        "Photosmart B010\0"
+        "Photosmart B110\0"
     ) {m_iPrinterType = eDJGenericVIP;}
     inline Printer* CreatePrinter(SystemServices* pSS) const { return new DJGenericVIP(pSS); }
 	inline PRINTER_TYPE GetPrinterType() const { return eDJGenericVIP;}

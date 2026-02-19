@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,22 +20,23 @@
 # Author: Don Welch
 #
 
-from __future__ import division
+
 
 # Std Lib
 import sys
 import os
 import time
-import cStringIO
-import urllib # TODO: Replace with urllib2 (urllib is deprecated in Python 3.0)
+from io import BytesIO
+from base.sixext.moves import urllib2_request, urllib2_parse, urllib2_error # TODO: Replace with urllib2 (urllib is deprecated in Python 3.0)
 import re
 
 # Local
 from base.g import *
 from base.codes import *
 from base import device, utils, codes, dime
-from fax import *
-
+from .fax import *
+from base.sixext import PY3
+from base.sixext import to_bytes_utf8
 #import xml.parsers.expat as expat
 
 
@@ -80,11 +82,16 @@ class SOAPFaxDevice(FaxDevice):
         else:
             self.http_host = 'localhost'
 
+    def isAuthRequired(self):
+        return False; 
 
     def post(self, url, post):
         s = []
-        for k, v in post.items():
-            s.append("%s=%s" % (k, urllib.quote(str(v))))
+        for k, v in list(post.items()):
+            if PY3:
+                s.append("%s=%s" % (k, urllib2_parse.quote(str(v))))
+            else:
+                s.append("%s=%s" % (k, urllib2_parse.quote(v.encode('utf-8'))))
 
         s = '&'.join(s)
 
@@ -100,20 +107,18 @@ Cache-control: No-cache
 %s""" % (url, self.http_host, len(s), s)
 
         log.log_data(data)
-        self.writeEWS(data)
-        ret = cStringIO.StringIO()
+        self.writeEWS(data.encode('utf-8'))
+        ret = BytesIO()
 
         while self.readEWS(4096, ret, timeout=5):
             pass
 
         ret = ret.getvalue()
-
         log.log_data(ret)
 
         self.closeEWS()
 
-        match = http_result_pat.match(ret)
-
+        match = http_result_pat.match(ret.decode('utf-8'))
         try:
             code = int(match.group(1))
         except (ValueError, TypeError):
@@ -127,7 +132,7 @@ Cache-control: No-cache
 
 
     def getPhoneNum(self):
-        stream = cStringIO.StringIO()
+        stream = BytesIO()
         self.getEWSUrl("/hp/device/settings_fax_setup_wizard.xml", stream)
         fax_setup = utils.XMLToDictParser().parseXML(stream.getvalue())
         return fax_setup['faxsetupwizard-faxvoicenumber-faxnumber']
@@ -136,11 +141,15 @@ Cache-control: No-cache
 
 
     def setStationName(self, name):
-        return self.post("/hp/device/set_config.html", {"FaxCompanyName": str(name)})
+        try:
+            name = name
+        except(UnicodeEncodeError, UnicodeDecodeError):
+            log.error("Unicode Error")
+        return self.post("/hp/device/set_config.html", {"FaxCompanyName": name})
 
 
     def getStationName(self):
-        stream = cStringIO.StringIO()
+        stream = BytesIO()
         self.getEWSUrl("/hp/device/settings_fax_setup_wizard.xml", stream)
         fax_setup = utils.XMLToDictParser().parseXML(stream.getvalue())
         return fax_setup['faxsetupwizard-userinformation-faxcompanyname']
@@ -149,7 +158,7 @@ Cache-control: No-cache
 
 
     def setDateAndTime(self):
-        stream = cStringIO.StringIO()
+        stream = BytesIO()
         self.getEWSUrl("/hp/device/settings_fax_setup_wizard.xml", stream)
         fax_setup = utils.XMLToDictParser().parseXML(stream.getvalue())
         timeformat = fax_setup['faxsetupwizard-time-timeformat']
@@ -180,16 +189,16 @@ Cache-control: No-cache
         if timeformat == TIME_FORMAT_AM_PM and hr > 12:
             hr -= 12
 
-        post = {"DateFormat" : dateformat,
-                "Year" : t[0],
-                "Month" : t[1],
-                "Day" : t[2],
-                "TimeFormat" : timeformat,
-                "Hour" : hr,
-                "Minute" : t[4]}
+        post = {"DateFormat" : str(dateformat),
+                "Year" : str(t[0]),
+                "Month" : str(t[1]),
+                "Day" : str(t[2]),
+                "TimeFormat" : str(timeformat),
+                "Hour" : str(hr),
+                "Minute" : str(t[4])}
 
         if timeformat == TIME_FORMAT_AM_PM:
-            post['AM'] = am_pm
+            post['AM'] = str(am_pm)
 
         return self.post("/hp/device/set_config.html", post)
 
@@ -293,7 +302,7 @@ class SOAPFaxSendThread(FaxSendThread):
                 try:
                     try:
                         self.dev.open()
-                    except Error, e:
+                    except Error as e:
                         log.error("Unable to open device (%s)." % e.msg)
                         state = STATE_ERROR
                     else:
@@ -323,7 +332,7 @@ class SOAPFaxSendThread(FaxSendThread):
                 state = STATE_COVER_PAGE
 
                 try:
-                    recipient = next_recipient.next()
+                    recipient = next(next_recipient)
                     log.debug("Processing for recipient %s" % recipient['name'])
                     self.write_queue((STATUS_SENDING_TO_RECIPIENT, 0, recipient['name']))
                 except StopIteration:
@@ -409,7 +418,7 @@ class SOAPFaxSendThread(FaxSendThread):
                         fax_send_state = FAX_SEND_STATE_BEGINJOB
                         try:
                             self.dev.open()
-                        except Error, e:
+                        except Error as e:
                             log.error("Unable to open device (%s)." % e.msg)
                             fax_send_state = FAX_SEND_STATE_ERROR
                         else:
@@ -420,7 +429,7 @@ class SOAPFaxSendThread(FaxSendThread):
                         log.debug("%s State: BeginJob" % ("*"*20))
 
                         try:
-                            ff = file(self.f, 'r')
+                            ff = open(self.f, 'rb')
                         except IOError:
                             log.error("Unable to read fax file.")
                             fax_send_state = FAX_SEND_STATE_ERROR
@@ -436,7 +445,7 @@ class SOAPFaxSendThread(FaxSendThread):
                         magic, version, total_pages, hort_dpi, vert_dpi, page_size, \
                             resolution, encoding, reserved1, reserved2 = self.decode_fax_header(header)
 
-                        if magic != 'hplip_g3':
+                        if magic != b'hplip_g3':
                             log.error("Invalid file header. Bad magic.")
                             fax_send_state = FAX_SEND_STATE_ERROR
                         else:
@@ -446,7 +455,7 @@ class SOAPFaxSendThread(FaxSendThread):
 
                         job_id = self.job_id
                         delay = 0
-                        faxnum = recipient['fax'].encode('ascii')
+                        faxnum = recipient['fax']
                         speeddial = 0
 
                         if resolution == RESOLUTION_STD:
@@ -459,15 +468,15 @@ class SOAPFaxSendThread(FaxSendThread):
                         soap = utils.cat(
 """<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Body><Fax:BeginJob xmlns:Fax="urn:Fax"><ticket xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="Fax:Ticket"><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xsi:type="xsd:string">$job_id</jobId><resolution xsi:type="Fax:Resolution">$res</resolution><delay xmlns:xsd="http://www.w3.org/2001/XMLSchema" xsi:type="xsd:positiveInteger">$delay</delay><phoneNumber xmlns:xsd="http://www.w3.org/2001/XMLSchema" xsi:type="xsd:string">$faxnum</phoneNumber><speedDial xmlns:xsd="http://www.w3.org/2001/XMLSchema" xsi:type="xsd:positiveInteger">$speeddial</speedDial></ticket></Fax:BeginJob></SOAP-ENV:Body></SOAP-ENV:Envelope>""")
 
-                        data = self.format_http(soap)
+                        data = self.format_http(soap.encode('utf-8'))
+
                         log.log_data(data)
 
                         if log.is_debug():
-                            file('beginjob.log', 'w').write(data)
-
+                            open('beginjob.log', 'wb').write(data)
                         self.dev.openSoapFax()
                         self.dev.writeSoapFax(data)
-                        ret = cStringIO.StringIO()
+                        ret = BytesIO()
 
                         while self.dev.readSoapFax(8192, ret, timeout=5):
                             pass
@@ -475,12 +484,11 @@ class SOAPFaxSendThread(FaxSendThread):
                         ret = ret.getvalue()
 
                         if log.is_debug():
-                            file('beginjob_ret.log', 'w').write(ret)
-
+                            open('beginjob_ret.log', 'wb').write(ret)
                         log.log_data(ret)
                         self.dev.closeSoapFax()
 
-                        if self.get_error_code(ret) == HTTP_OK:
+                        if self.get_error_code(ret.decode('utf-8')) == HTTP_OK:
                             fax_send_state = FAX_SEND_STATE_DOWNLOADPAGES
                         else:
                             fax_send_state = FAX_SEND_STATE_ERROR
@@ -488,7 +496,7 @@ class SOAPFaxSendThread(FaxSendThread):
 
                     elif fax_send_state == FAX_SEND_STATE_DOWNLOADPAGES: # -------------- DownloadPages (110, 60, 0)
                         log.debug("%s State: DownloadPages" % ("*"*20))
-                        page = StringIO()
+                        page = BytesIO()
                         for p in range(total_pages):
 
                             if self.check_for_cancel():
@@ -524,7 +532,7 @@ class SOAPFaxSendThread(FaxSendThread):
                                 fax_send_state = FAX_SEND_STATE_ERROR
                                 break
 
-                            if data == '':
+                            if data == b'':
                                 log.error("No data!")
                                 fax_send_state = FAX_SEND_STATE_ERROR
                                 break
@@ -536,24 +544,23 @@ class SOAPFaxSendThread(FaxSendThread):
 """<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Header><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:string" SOAP-ENV:mustUnderstand="1">$job_id</jobId></SOAP-ENV:Header><SOAP-ENV:Body><Fax:DownloadPage xmlns:Fax="urn:Fax"><height xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:positiveInteger">$height</height></Fax:DownloadPage></SOAP-ENV:Body></SOAP-ENV:Envelope>""")
 
                             m = dime.Message()
-                            m.add_record(dime.Record("cid:id0", "http://schemas.xmlsoap.org/soap/envelope/",
-                                dime.TYPE_T_URI, soap))
+                            m.add_record(dime.Record(b"cid:id0", b"http://schemas.xmlsoap.org/soap/envelope/",
+                                dime.TYPE_T_URI, to_bytes_utf8(soap)))
 
-                            m.add_record(dime.Record("", "image/g4fax", dime.TYPE_T_MIME, data))
+                            m.add_record(dime.Record(b"", b"image/g4fax", dime.TYPE_T_MIME, data))
 
-                            output = cStringIO.StringIO()
+                            output = BytesIO()
                             m.generate(output)
                             data = self.format_http(output.getvalue(), content_type="application/dime")
                             log.log_data(data)
                             if log.is_debug():
-                                file('downloadpages%d.log' % p, 'w').write(data)
-
+                                           open('downloadpages%d.log' % p, 'wb').write(data)
                             try:
                                 self.dev.writeSoapFax(data)
                             except Error:
                                 fax_send_state = FAX_SEND_STATE_ERROR
 
-                            ret = cStringIO.StringIO()
+                            ret = BytesIO()
 
                             try:
                                 while self.dev.readSoapFax(8192, ret, timeout=5):
@@ -564,12 +571,12 @@ class SOAPFaxSendThread(FaxSendThread):
                             ret = ret.getvalue()
 
                             if log.is_debug():
-                                file('downloadpages%d_ret.log' % p, 'w').write(ret)
+                                open('downloadpages%d_ret.log' % p, 'wb').write(ret)
 
                             log.log_data(ret)
                             self.dev.closeSoapFax()
 
-                            if self.get_error_code(ret) != HTTP_OK:
+                            if self.get_error_code(ret.decode('utf-8')) != HTTP_OK:
                                 fax_send_state = FAX_SEND_STATE_ERROR
                                 break
 
@@ -588,15 +595,15 @@ class SOAPFaxSendThread(FaxSendThread):
                         soap = utils.cat(
 """<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Header><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:string" SOAP-ENV:mustUnderstand="1">$job_id</jobId></SOAP-ENV:Header><SOAP-ENV:Body><Fax:EndJob xmlns:Fax="urn:Fax"><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:string">$job_id</jobId></Fax:EndJob></SOAP-ENV:Body></SOAP-ENV:Envelope>""")
 
-                        data = self.format_http(soap)
+                        data = self.format_http(soap.encode('utf-8'))
 
                         log.log_data(data)
 
                         if log.is_debug():
-                            file('endjob.log', 'w').write(data)
+                            open('endjob.log', 'wb').write(data)
 
                         self.dev.writeSoapFax(data)
-                        ret = cStringIO.StringIO()
+                        ret = BytesIO()
 
                         while self.dev.readSoapFax(8192, ret, timeout=5):
                             pass
@@ -604,12 +611,12 @@ class SOAPFaxSendThread(FaxSendThread):
                         ret = ret.getvalue()
 
                         if log.is_debug():
-                            file('endjob_ret.log', 'w').write(ret)
+                            open('endjob_ret.log', 'wb').write(ret)
 
                         log.log_data(ret)
                         self.dev.closeSoapFax()
 
-                        if self.get_error_code(ret) == HTTP_OK:
+                        if self.get_error_code(ret.decode('utf-8')) == HTTP_OK:
                             fax_send_state = FAX_SEND_STATE_SUCCESS
                         else:
                             fax_send_state = FAX_SEND_STATE_ERROR
@@ -622,15 +629,15 @@ class SOAPFaxSendThread(FaxSendThread):
                         soap = utils.cat(
 """<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"><SOAP-ENV:Header><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:string" SOAP-ENV:mustUnderstand="1">$job_id</jobId></SOAP-ENV:Header><SOAP-ENV:Body><Fax:CancelJob xmlns:Fax="urn:Fax"><jobId xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xsd:string">$job_id</jobId></Fax:CancelJob></SOAP-ENV:Body></SOAP-ENV:Envelope>""")
 
-                        data = self.format_http(soap)
+                        data = self.format_http(soap.encode('utf-8'))
 
                         log.log_data(data)
 
                         if log.is_debug():
-                            file('canceljob.log', 'w').write(data)
+                            open('canceljob.log', 'wb').write(data)
 
                         self.dev.writeSoapFax(data)
-                        ret = cStringIO.StringIO()
+                        ret = BytesIO()
 
                         while self.dev.readSoapFax(8192, ret, timeout=5):
                             pass
@@ -638,12 +645,12 @@ class SOAPFaxSendThread(FaxSendThread):
                         ret = ret.getvalue()
 
                         if log.is_debug():
-                            file('canceljob_ret.log', 'w').write(ret)
+                            open('canceljob_ret.log', 'wb').write(ret)
 
                         log.log_data(ret)
                         self.dev.closeSoapFax()
 
-                        if self.get_error_code(ret) == HTTP_OK:
+                        if self.get_error_code(ret.decode('utf-8')) == HTTP_OK:
                             fax_send_state = FAX_SEND_STATE_CLOSE_SESSION
                         else:
                             fax_send_state = FAX_SEND_STATE_ERROR
@@ -703,7 +710,7 @@ class SOAPFaxSendThread(FaxSendThread):
         host = self.http_host
         soap_len = len(soap)
 
-        return utils.cat(
+        return (utils.cat(
 """POST / HTTP/1.1\r
 Host: $host\r
 User-Agent: hplip/2.0\r
@@ -711,8 +718,7 @@ Content-Type: $content_type\r
 Content-Length: $soap_len\r
 Connection: close\r
 SOAPAction: ""\r
-\r
-$soap""")
+\r\n""")).encode('utf-8') + soap
 
 
 

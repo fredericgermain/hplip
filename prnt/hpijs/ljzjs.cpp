@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ljzjs.cpp : Implementation for the LJZjs class
 
-  Copyright (c) 1996 - 2007, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2007, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -135,6 +135,13 @@ LJZjs::LJZjs (SystemServices* pSS, int numfonts, BOOL proto)
     {
         constructor_error = PLUGIN_LIBRARY_MISSING;
     }
+	//Issue: LJZJSMono class printers not printing in RHEL 
+	//Cause: Since start page is common for LJZJSMono and LJZJSColor class, the items of 
+	//LJZJSColor-2 format was used for LJZJSMono due to below variable not initialised 
+	//Fix: Added initialisation so that correct LJZJSMono items are used.  
+	//Variable is updated in LJZJSColor. 
+	m_bLJZjsColor2Printer = FALSE; 
+
 }
 
 LJZjs::~LJZjs ()
@@ -313,6 +320,10 @@ DRIVER_ERROR LJZjs::StartPage (DWORD dwWidth, DWORD dwHeight)
         return err;
     }
 
+	if(m_bLJZjsColor2Printer)
+	{
+		dwNumItems = 13;
+	}
     if (m_cmColorMode == COLOR && m_bIamColor)
     {
         iPlanes = 4;
@@ -337,8 +348,11 @@ DRIVER_ERROR LJZjs::StartPage (DWORD dwWidth, DWORD dwHeight)
     i += SendItem (szStr+i, ZJIT_UINT32, ZJI_VIDEO_BPP, m_iBPP);
     i += SendItem (szStr+i, ZJIT_UINT32, ZJI_VIDEO_X, dwWidth/m_iBPP);
     i += SendItem (szStr+i, ZJIT_UINT32, ZJI_VIDEO_Y, m_dwLastRaster);
-    i += SendItem (szStr+i, ZJIT_UINT32, ZJI_RET, RET_ON);
-    i += SendItem (szStr+i, ZJIT_UINT32, ZJI_TONER_SAVE, (cqm == QUALITY_DRAFT) ? 1 : 0);
+	if(!m_bLJZjsColor2Printer)
+	{
+		i += SendItem (szStr+i, ZJIT_UINT32, ZJI_RET, RET_ON);
+		i += SendItem (szStr+i, ZJIT_UINT32, ZJI_TONER_SAVE, (cqm == QUALITY_DRAFT) ? 1 : 0);
+	}
 
     err = Send ((const BYTE *) szStr, i);
     return err;
@@ -491,6 +505,77 @@ DRIVER_ERROR LJZjs::JbigCompress ()
 
     err = EndPage ();
 
+    return err;
+}
+
+
+/*JBig Compress for LJZjsColor-2 Printers
+Separate function written for LJZjsColor-2 Printers, since for them, compression is done for whole plane data at a time
+whereas for other deiveces, compression is done for 100 lines of each plane*/
+DRIVER_ERROR LJZjs::JbigCompress_LJZjsColor2 ()
+{
+    DRIVER_ERROR        err = NO_ERROR;
+    HPLJZjcBuff         myBuffer;
+    
+	int                 iPlanes = (m_cmColorMode == COLOR) ? 4 : 1;
+	int					arrPlanesOrder[] = {3,2,1,4};
+	int					nByteCount = 0;
+	int					iHeight = 0;
+	
+    HPLJZjsJbgEncSt   se;
+    BYTE    *pbUnCompressedData = NULL;
+    
+	BYTE    *bitmaps[4] =
+	{
+		m_pszInputRasterData,
+			m_pszInputRasterData + (m_dwWidth * m_iBPP * m_dwLastRaster),
+			m_pszInputRasterData + (m_dwWidth * m_iBPP * m_dwLastRaster * 2),
+			m_pszInputRasterData + (m_dwWidth * m_iBPP * m_dwLastRaster * 3)
+	};
+
+    myBuffer.pszCompressedData = new BYTE[m_dwWidth * m_dwLastRaster * m_iBPP];
+	if(NULL == myBuffer.pszCompressedData)
+	{
+		return ALLOCMEM_ERROR;
+	}
+    myBuffer.dwTotalSize = 0;    	
+	
+	for (int nPlaneCount = 0; nPlaneCount < iPlanes; nPlaneCount++)    
+    {
+		
+		memset (myBuffer.pszCompressedData, 0, m_dwWidth * m_dwLastRaster * m_iBPP);
+		myBuffer.dwTotalSize = 0;
+		
+		if(4 == iPlanes)/*If there are 4 planes follow LJZjsColor-2 order of 3 2 1 4*/
+		{
+			pbUnCompressedData = bitmaps[arrPlanesOrder[nPlaneCount]-1] ;
+		}
+		else /* Should not happen */
+		{
+			return SYSTEM_ERROR;
+		}
+
+		
+		iHeight = m_dwLastRaster; /*Send all scan lines at one go*/
+		
+		HPLJJBGCompress (m_dwWidth * 8 * m_iBPP, iHeight, &pbUnCompressedData, &myBuffer, &se);
+		
+		if(0 == nPlaneCount)
+		{
+			StartPage (se.xd, se.yd);
+		}
+		
+		err = this->SendPlaneData (arrPlanesOrder[nPlaneCount], &se, &myBuffer, FALSE);
+        
+    }
+	
+    delete [] myBuffer.pszCompressedData;
+    m_dwCurrentRaster = 0;
+    m_pszCurPtr = m_pszInputRasterData;
+    memset (m_pszCurPtr, 0, (m_dwWidth * m_dwLastRaster * iPlanes * m_iBPP));
+	
+    err = EndPage ();
+	
     return err;
 }
 

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2010 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,8 +26,7 @@ import os.path
 import struct
 import time
 import threading
-import cStringIO
-
+from io import BytesIO  #TBD check whether this requires base.six ...
 from stat import *
 
 # Local
@@ -35,8 +34,9 @@ from base.g import *
 from base.codes import *
 from base import device, utils, pml, codes
 from prnt import cups
-from fax import *
-import hpmudext
+from .fax import *
+
+hpmudext = utils.import_ext('hpmudext')
 
 try:
     from ctypes import cdll
@@ -46,7 +46,9 @@ except ImportError:
     log.error("Marvell fax support requires python-ctypes module. Exiting!")
     sys.exit(1)
 
-
+if sys.version_info[0] == 2 and sys.version_info[1] < 7:
+    memoryview = buffer
+            
 # **************************************************************************** #
 # Marvell Message Types
 START_FAX_JOB = 0
@@ -98,12 +100,24 @@ class MarvellFaxDevice(FaxDevice):
 
             lib_name = head+"/fax/plugins/fax_marvell.so"
             log.debug("Load the library %s\n" % lib_name)
-            self.libfax_marvell = cdll.LoadLibrary(lib_name)
-        except Error, e:
+            from installer import pluginhandler
+            pluginObj = pluginhandler.PluginHandle()
+
+            if pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
+                log.error("Loading %s failed. Try after installing plugin libraries\n" %lib_name);
+                log.info("Run \"hp-plugin\" to installa plugin libraries if you are not automatically prompted\n")
+                job_id =0;
+                self.service.SendEvent(device_uri, printer_name, EVENT_FAX_FAILED_MISSING_PLUGIN, os.getenv('USER'), job_id, "Plugin is not installed")
+                sys.exit(1)
+            else:
+                self.libfax_marvell = cdll.LoadLibrary(lib_name)
+        except Error as e:
             log.error("Loading fax_marvell failed (%s)\n" % e.msg);
             sys.exit(1)
 
-
+    def isAuthRequired(self):
+        return False; 
+        
     # Creates a message packet for message type given in argument, and sends it to device
     #
     # 1. Gets the message packet using fax_marvell.so
@@ -114,10 +128,13 @@ class MarvellFaxDevice(FaxDevice):
         i_buf = int_array_8(0, 0, 0, 0, 0, 0, 0, 0)
 
         result = self.libfax_marvell.create_packet(msg_type, param1, param2, status, data_len, byref(i_buf))
-        buf = buffer(i_buf)
-        log.log_data(buf, 32)
+        buf = memoryview(i_buf)
+        try:
+            log.log_data(buf.tobytes(), 32)
+        except:
+            log.log_data(buf, 32)    # For Python 2.6
         self.writeMarvellFax(buf)
-        self.closeMarvellFax()
+#        self.closeMarvellFax()
 
         return result
 
@@ -126,12 +143,12 @@ class MarvellFaxDevice(FaxDevice):
     #       Reads the response from device, and sends the data read to the caller of this method
     #       No Marvell specific code or info
     def read_response_for_message(self, msg_type):
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
         while self.readMarvellFax(32, ret_buf, timeout=10):
                             pass
 
         ret_buf = ret_buf.getvalue()
-        self.closeMarvellFax()
+        #self.closeMarvellFax()
 
         log.debug("response_for_message (%d): response packet is\n" % msg_type)
         log.log_data(ret_buf, 32)
@@ -142,7 +159,7 @@ class MarvellFaxDevice(FaxDevice):
     def setPhoneNum(self, num):
         log.debug("************************* setPhoneNum (%s) START **************************" % num)
 
-        set_buf = cStringIO.StringIO()
+        set_buf = BytesIO()
 
         int_array = c_int * 8
         i_buf = int_array(0, 0, 0, 0, 0, 0, 0, 0)
@@ -160,20 +177,26 @@ class MarvellFaxDevice(FaxDevice):
         result = self.libfax_marvell.create_packet(SET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
         result = self.libfax_marvell.create_fax_settings_packet(self.station_name, str(num), date_buf, byref(c_buf))
 
-        msg_buf = buffer(i_buf)
-        msg_c_buf = buffer(c_buf)
+        msg_buf = memoryview(i_buf)
+        msg_c_buf = memoryview(c_buf)
 
         for i in range(0, 32):
-            set_buf.write(msg_buf[i])
+            try:
+                set_buf.write(str(msg_buf.tobytes()[i]).encode('utf-8'))
+            except:
+                set_buf.write(str(msg_buf[i]))   #For python 2.6
         for i in range(0, 308):
-            set_buf.write(msg_c_buf[i])
+            try:
+                set_buf.write(str(msg_c_buf.tobytes()[i]).encode('utf-8'))
+            except:
+                 set_buf.write(msg_c_buf[i])      #For python 2.6
 
         set_buf = set_buf.getvalue()
         log.debug("setPhoneNum: send SET_FAX_SETTINGS message and data ===> ")
         log.log_data(set_buf, 340)
 
         self.writeMarvellFax(set_buf)
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
         while self.readMarvellFax(32, ret_buf, timeout=10):
                             pass
         ret_buf = ret_buf.getvalue()
@@ -192,13 +215,10 @@ class MarvellFaxDevice(FaxDevice):
         ph_buf = int_array_8(0, 0, 0, 0, 0, 0, 0, 0)
 
         log.debug("******************** getPhoneNum START **********************")
-
         result = self.libfax_marvell.create_packet(GET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
-
-        buf = buffer(i_buf)
+        buf = memoryview(i_buf)
         self.writeMarvellFax(buf)
-        self.closeMarvellFax()
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
         while self.readMarvellFax(512, ret_buf, timeout=10):
                             pass
         ret_buf = ret_buf.getvalue()
@@ -208,16 +228,19 @@ class MarvellFaxDevice(FaxDevice):
         log.debug("create_packet: response is %d" % response)
  
         response = self.libfax_marvell.extract_phone_number(ret_buf, ph_buf) 
-        ph_num_buf = cStringIO.StringIO()
+        ph_num_buf = BytesIO()
         for i in range(0, 7):
             if ph_buf[i]:
-               ph_num_buf.write(str(ph_buf[i]))
+               try:
+                   ph_num_buf.write(str(ph_buf[i]))
+               except:
+                   pass
 
         ph_num_buf = ph_num_buf.getvalue()
         log.debug("getPhoneNum: ph_num_buf=%s " % (ph_num_buf))
 
         log.debug("******************** getPhoneNum END **********************")
-        return ph_num_buf
+        return str(ph_num_buf)
 
 
     # Note down the fax (phone) number
@@ -231,7 +254,7 @@ class MarvellFaxDevice(FaxDevice):
 
         int_array = c_int * 8
         i_buf = int_array(0, 0, 0, 0, 0, 0, 0, 0)
-        set_buf = cStringIO.StringIO()
+        set_buf = BytesIO()
 
         char_array = c_char * 308
         c_buf = char_array()
@@ -244,21 +267,32 @@ class MarvellFaxDevice(FaxDevice):
         log.debug(date_buf)
 
         result = self.libfax_marvell.create_packet(SET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
-        result = self.libfax_marvell.create_fax_settings_packet(str(name), self.phone_num, date_buf, byref(c_buf))
+        
+        try:
+            result = self.libfax_marvell.create_fax_settings_packet(name, self.phone_num, date_buf, byref(c_buf))
+        except(UnicodeEncodeError, UnicodeDecodeError):
+            log.error("Unicode Error")
 
-        msg_buf = buffer(i_buf)
-        msg_c_buf = buffer(c_buf)
+        msg_buf = memoryview(i_buf)
+        msg_c_buf = memoryview(c_buf)
 
         for i in range(0, 32):
-            set_buf.write(msg_buf[i])
+            try:
+                set_buf.write(str(msg_buf.tobytes()[i]).encode('utf-8'))
+            except:
+                set_buf.write(msg_buf[i])  #For python 2.6
         for i in range(0, 308):
-            set_buf.write(msg_c_buf[i])
+            try:
+                set_buf.write(str(msg_c_buf.tobytes()[i]).encode('utf-8'))
+            except:
+                set_buf.write(msg_c_buf[i])   #For python 2.6
         set_buf = set_buf.getvalue()
         log.debug("setStationName: SET_FAX_SETTINGS message and data ===> ")
         log.log_data(set_buf, 340)
 
         self.writeMarvellFax(set_buf)
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
+            
         while self.readMarvellFax(32, ret_buf, timeout=10):
                             pass
         ret_buf = ret_buf.getvalue()
@@ -280,11 +314,11 @@ class MarvellFaxDevice(FaxDevice):
 
         result = self.libfax_marvell.create_packet(GET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
 
-        buf = buffer(i_buf)
+        buf = memoryview(i_buf)
         self.writeMarvellFax(buf)
-        self.closeMarvellFax()
+        #self.closeMarvellFax()
 
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
         while self.readMarvellFax(512, ret_buf, timeout=10):
                             pass
 
@@ -298,7 +332,7 @@ class MarvellFaxDevice(FaxDevice):
         log.debug("getStationName: station_name=%s ; result is %d" % (st_buf.value, result))
  
         log.debug("************************* getStationName END **************************")
-        return st_buf.value
+        return st_buf.value.decode('utf-8')
 
 
    # Note down the station-name
@@ -317,8 +351,8 @@ class MarvellFaxDevice(FaxDevice):
         log.debug("************************* setDateAndTime START **************************")
 
         c_buf = create_string_buffer(308)
-        set_buf = cStringIO.StringIO()
-        ret_buf = cStringIO.StringIO()
+        set_buf = BytesIO()
+        ret_buf = BytesIO()
         date_array = c_char * 15
         date_buf = date_array()
 
@@ -329,16 +363,20 @@ class MarvellFaxDevice(FaxDevice):
         log.debug(date_buf)
 
         result = self.libfax_marvell.create_packet(SET_FAX_SETTINGS, 0, 0, 0, 0, byref(i_buf))
-        result = create_marvell_faxsettings_pkt(self.phone_num, self.station_name, date_buf, c_buf)
+# TBD: Need to check.. create_marvell_faxsettings_pkt showing as not defined...
+#        result = create_marvell_faxsettings_pkt(self.phone_num, self.station_name, date_buf, c_buf)
 
-        msg_buf = buffer(i_buf)
+        msg_buf = memoryview(i_buf)
         for i in range(0, 31):
-            set_buf.write(msg_buf[i])
+            try:
+                set_buf.write(msg_buf.tobytes()[i:i+1])
+            except:
+                set_buf.write(msg_buf[i])  # For python 2.6
 
         set_buf.write(c_buf.raw)
         set_buf = set_buf.getvalue()
-        self.dev.writeMarvellFax(set_buf)
-        while self.dev.readMarvellFax(32, ret_buf, timeout=5):
+        self.writeMarvellFax(set_buf)
+        while self.readMarvellFax(32, ret_buf, timeout=5):
                             pass
         ret_buf = ret_buf.getvalue()
         self.closeMarvellFax()
@@ -362,10 +400,10 @@ class MarvellFaxDevice(FaxDevice):
         param1 = c_int(0)
 
         result = self.libfax_marvell.create_packet(REQUEST_FAX_STATUS, 0, 0, 0, 0, byref(i_buf))
-        buf = buffer(i_buf)
+        buf = memoryview(i_buf)
         self.writeMarvellFax(buf)
 
-        ret_buf = cStringIO.StringIO()
+        ret_buf = BytesIO()
         while self.readMarvellFax(32, ret_buf, timeout=5):
                             pass
         ret_buf = ret_buf.getvalue()
@@ -474,7 +512,7 @@ class MarvellFaxSendThread(FaxSendThread):
                 try:
                     try:
                         self.dev.open()
-                    except Error, e:
+                    except Error as e:
                         log.error("Unable to open device (%s)." % e.msg)
                         state = STATE_ERROR
                     else:
@@ -504,7 +542,7 @@ class MarvellFaxSendThread(FaxSendThread):
                 state = STATE_COVER_PAGE
 
                 try:
-                    recipient = next_recipient.next()
+                    recipient = next(next_recipient)
 
                     self.write_queue((STATUS_SENDING_TO_RECIPIENT, 0, recipient['name']))
                     
@@ -606,7 +644,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         fax_send_state = FAX_SEND_STATE_NEXT_FILE
                         try:
                             self.dev.open()
-                        except Error, e:
+                        except Error as e:
                             log.error("Unable to open device (%s)." % e.msg)
                             fax_send_state = FAX_SEND_STATE_ERROR
                         else:
@@ -618,7 +656,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         log.debug("%s State: Open device" % ("*"*20))
                         fax_send_state = FAX_SEND_STATE_CHECK_IDLE
                         try:
-                             fax_file = next_file.next()
+                             fax_file = next(next_file)
                              self.f = fax_file[0]
                              log.debug("***** file name is : %s..." % self.f)
                         except StopIteration:
@@ -631,7 +669,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         fax_send_state = FAX_SEND_STATE_START_JOB_REQUEST
 
                         try:
-                            ff = file(self.f, 'r')
+                            ff = open(self.f, 'rb')
                         except IOError:
                             log.error("Unable to read fax file.")
                             fax_send_state = FAX_SEND_STATE_ERROR
@@ -647,7 +685,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         magic, version, total_pages, hort_dpi, vert_dpi, page_size, \
                             resolution, encoding, reserved1, reserved2 = self.decode_fax_header(header)
 
-                        if magic != 'hplip_g3':
+                        if magic != b'hplip_g3':
                             log.error("Invalid file header. Bad magic.")
                             fax_send_state = FAX_SEND_STATE_ERROR
                         else:
@@ -702,7 +740,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         fax_send_state = FAX_SEND_STATE_SEND_FAX_HEADER
 
                         c_buf = create_string_buffer(68)
-                        set_buf = cStringIO.StringIO()
+                        set_buf = BytesIO()
 
                         no_data = None
                         ret_val = self.dev.libfax_marvell.create_job_settings_packet(no_data, rec_num, c_buf)
@@ -710,7 +748,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         set_buf = set_buf.getvalue()
 
                         self.dev.writeMarvellFax(set_buf)
-                        self.dev.closeMarvellFax()
+                        #self.dev.closeMarvellFax()
 
 
                     elif fax_send_state == FAX_SEND_STATE_SEND_FAX_HEADER: # -------------- Fax header 
@@ -721,7 +759,7 @@ class MarvellFaxSendThread(FaxSendThread):
                         log.debug("%s State: Send pages" % ("*"*20))
                         fax_send_state = FAX_SEND_STATE_END_FILE_DATA
                         current_state = SUCCESS
-                        page = StringIO()
+                        page = BytesIO()
 
                         file_len = os.stat(self.f)[ST_SIZE]
                         bytes_to_read = file_len - FILE_HEADER_SIZE - (PAGE_HEADER_SIZE*total_pages)
@@ -781,7 +819,7 @@ class MarvellFaxSendThread(FaxSendThread):
                                       log.debug("Successfully sent fax-data-block request")
 
                                    self.dev.writeMarvellFax(data)
-                                   self.dev.closeMarvellFax()
+                                   #self.dev.closeMarvellFax()
                                except Error:
                                    log.error("Channel write error.")
                                    current_state = FAILURE

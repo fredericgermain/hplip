@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,12 +22,12 @@
 # Local
 from base.g import *
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
-from mimetypesdialog_base import Ui_MimeTypesDialog_base
+from .mimetypesdialog_base import Ui_MimeTypesDialog_base
 
 
 
@@ -37,7 +37,7 @@ class MimeTypesDialog(QDialog, Ui_MimeTypesDialog_base):
         self.setupUi(self)
 
         self.TypesTableWidget.setRowCount(len(mime_types))
-        t = mime_types.keys()
+        t = list(mime_types.keys())
         t.sort()
         for row, m in enumerate(t):
             i = QTableWidgetItem(m)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@
 
 import sys
 from qt import *
-from waitform_base import WaitForm_base
+from .waitform_base import WaitForm_base
 
 class WaitForm(WaitForm_base):
     def __init__(self, seconds, message=None, cancel_func=None, parent=None, name=None, modal=0, fl=0):

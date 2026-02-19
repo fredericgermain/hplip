@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -24,11 +24,11 @@
 # Local
 from base.g import *
 from base import maint
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from align10form_base import Align10Form_Base
+from .align10form_base import Align10Form_Base
 
 # Also supports align-type==11
 class Align10Form(Align10Form_Base):
@@ -36,7 +36,7 @@ class Align10Form(Align10Form_Base):
         Align10Form_Base.__init__(self,parent,name,modal,fl)
         self.Icon.setPixmap(load_pixmap('align10'))
 
-        self.controls = maint.align10and11Controls(pattern, align_type)
+        self.controls = maint.align10and11and14Controls(pattern, align_type)
 
         for line in self.controls:
             if not self.controls[line][0]:
@@ -47,7 +47,7 @@ class Align10Form(Align10Form_Base):
 
     def getValues(self):
         ret = []
-        controls = self.controls.keys()
+        controls = list(self.controls.keys())
         controls.sort()
         
         for line in controls:

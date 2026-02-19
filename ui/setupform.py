@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,7 +16,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Goutam Korra, Naga Samrat Chowdary Narla,
 
 # Std Lib
 import sys
@@ -26,13 +26,15 @@ import gzip
 import time
 import os.path, os
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils, models, pkit
+from base.sixext import  to_unicode
 from prnt import cups
-from installer import core_install
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
+from installer import pluginhandler
 
 try:
     from fax import fax
@@ -45,19 +47,9 @@ except ImportError:
 
 # Qt
 from qt import *
-from setupform_base import SetupForm_base
-from setupsettings import SetupSettings
-from setupmanualfind import SetupManualFind
-
-def restart_cups():
-    if os.path.exists('/etc/init.d/cups'):
-        return '/etc/init.d/cups restart'
-
-    elif os.path.exists('/etc/init.d/cupsys'):
-        return '/etc/init.d/cupsys restart'
-
-    else:
-        return 'killall -HUP cupsd'
+from .setupform_base import SetupForm_base
+from .setupsettings import SetupSettings
+from .setupmanualfind import SetupManualFind
 
 
 class DeviceListViewItem(QListViewItem):
@@ -78,12 +70,12 @@ class PrinterNameValidator(QValidator):
         QValidator.__init__(self, parent, name)
 
     def validate(self, input, pos):
-        input = unicode(input)
+        input = to_unicode(input)
 
         if not input:
             return QValidator.Acceptable, pos
 
-        elif input[pos-1] in u"""~`!@#$%^&*()-=+[]{}()\\/,.<>?'\";:| """:
+        elif input[pos-1] in """~`!@#$%^&*()-=+[]{}()\\/,.<>?'\";:| """:
             return QValidator.Invalid, pos
 
         # TODO: How to determine if unicode char is "printable" and acceptable
@@ -101,12 +93,12 @@ class PhoneNumValidator(QValidator):
         QValidator.__init__(self, parent, name)
 
     def validate(self, input, pos):
-        input = unicode(input)
+        input = to_unicode(input)
 
         if not input:
             return QValidator.Acceptable, pos
 
-        elif input[pos-1] not in u'0123456789-(+) ':
+        elif input[pos-1] not in '0123456789-(+) ':
             return QValidator.Invalid, pos
 
         else:
@@ -194,7 +186,7 @@ class SetupForm(SetupForm_base):
             self.__tr('Current: Filter: [%2]  Search: "%3"  TTL: %4  Timeout: %5s').arg(','.join(self.filter)).arg(self.search or '').arg(self.ttl).arg(self.timeout))
 
         cups.setPasswordCallback(showPasswordUI)
-
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     def showPage(self, page):
         orig_page = page
@@ -233,18 +225,18 @@ class SetupForm(SetupForm_base):
 
             norm_model = models.normalizeModelName(model).lower()
 
-            core = core_install.CoreInstall()
-            core.set_plugin_version()
+            pluginObj = pluginhandler.PluginHandle()
+
             plugin = self.mq.get('plugin', PLUGIN_NONE)
             plugin_reason = self.mq.get('plugin-reason', PLUGIN_REASON_NONE)
-            if plugin > PLUGIN_NONE and not core.check_for_plugin():
+            if plugin > PLUGIN_NONE and pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
                 ok, sudo_ok = pkit.run_plugin_command(plugin == PLUGIN_REQUIRED, plugin_reason)
                 if not sudo_ok:
                     self.FailureUI(self.__tr("<b>Unable to find an appropriate su/sudo utility to run hp-plugin.</b><p>Install kdesu, gnomesu, or gksu.</p>"))
                     return
-                if not ok or not core.check_for_plugin():
+                if not ok or pluginObj.getStatus() != pluginhandler.PLUGIN_INSTALLED:
                     if plugin == PLUGIN_REQUIRED:
-                        self.FailureUI(self.__tr("<b>The printer you are trying to setup requires a binary driver plug-in and it failed to install.</b><p>Please check your internet connection and try again.</p><p>Visit <u>http://hplipopensource.com</u> for more information.</p>"))
+                        self.FailureUI(self.__tr("<b>The device you are trying to setup requires a binary plug-in. Some functionalities may not work as expected without plug-ins.<p> Please run 'hp-plugin' as normal user to install plug-ins.</b></p><p>Visit <u>http://hplipopensource.com</u> for more infomation.</p>"))
                         return
                     else:
                         self.WarningUI(self.__tr("Either you have chosen to skip the installation of the optional plug-in or that installation has failed.  Your printer may not function at optimal performance."))
@@ -291,24 +283,31 @@ class SetupForm(SetupForm_base):
             #status, output = utils.run(restart_cups())
             #log.debug("Restart CUPS returned: exit=%d output=%s" % (status, output))
 
-            self.setupPrinter()
-
-            if self.setup_fax:
-                self.setupFax()
-                self.readwriteFaxInformation(False)
-
-                self.lineEdit5.setText(self.fax_number)
-                self.lineEdit6.setText(self.fax_name)
-                self.lineEdit7.setText(self.fax_name_company)
-                self.lineEdit8.setText(self.fax_location)
-                self.lineEdit9.setText(self.fax_desc)
-
-                self.faxGroupBox.setEnabled(True)
-
+            print_sts = self.setupPrinter()
+            if print_sts == cups.IPP_FORBIDDEN or print_sts == cups.IPP_NOT_AUTHENTICATED or print_sts == cups.IPP_NOT_AUTHORIZED:
+                pass
             else:
-                self.faxGroupBox.setEnabled(False)
+                if self.setup_fax:
+                    if self.setupFax() == cups.IPP_OK:
+                        self.readwriteFaxInformation(False)
 
-            self.setFinishEnabled(self.FinishedPage, True)
+                        self.lineEdit5.setText(self.fax_number)
+                        self.lineEdit6.setText(self.fax_name)
+                        self.lineEdit7.setText(self.fax_name_company)
+                        self.lineEdit8.setText(self.fax_location)
+                        self.lineEdit9.setText(self.fax_desc)
+
+                        self.faxGroupBox.setEnabled(True)
+
+                else:
+                    self.faxGroupBox.setEnabled(False)
+
+            if print_sts == cups.IPP_OK:
+                self.flashFirmware()
+
+                self.setFinishEnabled(self.FinishedPage, True)
+            else:
+                self.close()
 
         if orig_page != page:
             try:
@@ -423,7 +422,15 @@ class SetupForm(SetupForm_base):
                     else:
                         filter_dict[f] = (operator.gt, 0)
             else:
-                filter_dict['scan-type'] = (operator.gt, SCAN_TYPE_NONE)
+                filter_dict['scan-type'] = (operator.ge, SCAN_TYPE_NONE)
+
+            if self.bus == 'usb':
+                try:
+                    from base import smart_install
+                except ImportError:
+                    log.error("Failed to Import smart_install.py")
+                else:   # check if any SmartInstall devices and disables (if not, ignores)
+                    smart_install.disable(GUI_MODE, 'qt3')
 
             devices = device.probeDevices([self.bus], self.timeout, self.ttl, filter_dict, self.search, net_search='slp')
 
@@ -536,23 +543,13 @@ class SetupForm(SetupForm_base):
         if ppds is None or not ppds:
             ppds = cups.getSystemPPDs()
 
-        #print ppds
-
-        default_model = utils.xstrip(model.replace('series', '').replace('Series', ''), '_')
-        stripped_model = cups.stripModel2(models.normalizeModelName(model).lower())
-
-        self.ppd = cups.getPPDFile2(stripped_model, ppds)
+        self.ppd = cups.getPPDFile2(self.mq,  model , ppds)
         log.debug(self.ppd)
         self.ppdListView.clear()
 
         if self.ppd is not None:
-            #for ppd in self.ppd_dict:
             PPDListViewItem(self.ppdListView, self.ppd[0], self.ppd[1])
 
-#            i = self.ppdListView.firstChild()
-#            self.ppdListView.setCurrentItem(i)
-#            self.ppdListView.setSelected(i, True)
-#            self.ppd_file = self.ppdListView.currentItem().ppd_file
             self.ppd_file = self.ppd[0]
             log.debug(self.ppd_file)
 
@@ -569,7 +566,7 @@ class SetupForm(SetupForm_base):
 
     def otherPPDPushButton_clicked(self):
         ppd_dir = sys_conf.get('dirs', 'ppd')
-        ppd_file = unicode(QFileDialog.getOpenFileName(ppd_dir, "PPD Files (*.ppd *.ppd.gz);;All Files (*)", self, "open file dialog", "Choose a PPD file"))
+        ppd_file = to_unicode(QFileDialog.getOpenFileName(ppd_dir, "PPD Files (*.ppd *.ppd.gz);;All Files (*)", self, "open file dialog", "Choose a PPD file"))
 
         if ppd_file and os.path.exists(ppd_file):
             self.updatePPDPage({ppd_file: cups.getPPDDescription(ppd_file)})
@@ -596,16 +593,28 @@ class SetupForm(SetupForm_base):
 
         printer_name = default_model
 
+        installed_printer_names = device.getSupportedCUPSPrinterNames(['hp'])
         # Check for duplicate names
-        if self.device_uri in self.installed_print_devices and \
-            printer_name in self.installed_print_devices[self.device_uri]:
+        if (self.device_uri in self.installed_print_devices and printer_name in self.installed_print_devices[self.device_uri]) \
+           or (printer_name in installed_printer_names):
+            warn_text = self.__tr("<b>One or more print queues already exist for this device: %s</b>.<br> <b>Would you like to install another print queue for this device ?</b>" %
+                    ', '.join([printer.encode('utf-8') for printer in installed_printer_names if printer_name in printer]))
+            if ( QMessageBox.warning(self,
+                                self.caption(),
+                                warn_text,
+                                QMessageBox.Yes,
+                                QMessageBox.No,
+                                QMessageBox.NoButton) == QMessageBox.Yes ):
+
                 i = 2
                 while True:
                     t = printer_name + "_%d" % i
-                    if t not in self.installed_print_devices[self.device_uri]:
+                    if (t not in installed_printer_names) and (self.device_uri not in self.installed_print_devices or t not in self.installed_print_devices[self.device_uri]):
                         printer_name += "_%d" % i
                         break
                     i += 1
+            else:
+                self.close()
 
         self.printer_name_ok = True
         self.printerNameLineEdit.setText(printer_name)
@@ -644,7 +653,7 @@ class SetupForm(SetupForm_base):
 
 
     def printerNameLineEdit_textChanged(self,a0):
-        self.printer_name = unicode(a0)
+        self.printer_name = to_unicode(a0)
         self.defaultPrinterNamePushButton.setEnabled(True)
 
         self.printer_name_ok = True
@@ -678,16 +687,16 @@ class SetupForm(SetupForm_base):
 
 
     def printerLocationLineEdit_textChanged(self, a0):
-        self.location = unicode(a0)
+        self.location = to_unicode(a0)
 
     def printerDescriptionLineEdit_textChanged(self,a0):
-        self.desc = unicode(a0)
+        self.desc = to_unicode(a0)
 
     def faxLocationLineEdit_textChanged(self,a0):
-        self.fax_location = unicode(a0)
+        self.fax_location = to_unicode(a0)
 
     def faxDescriptionLineEdit_textChanged(self,a0):
-        self.fax_desc = unicode(a0)
+        self.fax_desc = to_unicode(a0)
 
     def defaultPrinterNamePushButton_clicked(self):
         self.setDefaultPrinterName()
@@ -703,15 +712,16 @@ class SetupForm(SetupForm_base):
         default_model = utils.xstrip(model.replace('series', '').replace('Series', ''), '_')
 
         fax_name = default_model + "_fax"
+        installed_fax_names = device.getSupportedCUPSPrinterNames(['hpfax'])
 
         # Check for duplicate names
-        if self.fax_uri in self.installed_fax_devices and \
-            fax_name in self.installed_fax_devices[self.fax_uri]:
+        if (self.fax_uri in self.installed_fax_devices and fax_name in self.installed_fax_devices[self.fax_uri]) \
+           or (fax_name in installed_fax_names):
         #if fax_name in self.installed_queues or fax_name == self.printer_name:
                 i = 2
                 while True:
                     t = fax_name + "_%d" % i
-                    if t not in self.installed_fax_devices[self.fax_uri]:
+                    if (t not in installed_fax_names) and (self.fax_uri not in self.installed_fax_devices or t not in self.installed_fax_devices[self.fax_uri]):
                         fax_name += "_%d" % i
                         break
                     i += 1
@@ -724,7 +734,7 @@ class SetupForm(SetupForm_base):
         #self.fax_name_error = False
 
     def faxNameLineEdit_textChanged(self, a0):
-        self.fax_name = unicode(a0)
+        self.fax_name = to_unicode(a0)
         self.defaultFaxNamePushButton.setEnabled(True)
 
         self.fax_name_ok = True
@@ -758,10 +768,10 @@ class SetupForm(SetupForm_base):
 
 
     def faxNumberLineEdit_textChanged(self, a0):
-        self.fax_number = unicode(a0)
+        self.fax_number = to_unicode(a0)
 
     def faxNameCoLineEdit_textChanged(self, a0):
-        self.fax_name_company = unicode(a0)
+        self.fax_name_company = to_unicode(a0)
 
     def faxCheckBox_clicked(self):
         pass
@@ -790,7 +800,7 @@ class SetupForm(SetupForm_base):
                     d.open()
                 except Error:
                     error_text = self.__tr("Unable to communicate with the device. Please check the device and try again.")
-                    log.error(unicode(error_text))
+                    log.error(to_unicode(error_text))
                     if QMessageBox.critical(self,
                                            self.caption(),
                                            error_text,
@@ -809,15 +819,15 @@ class SetupForm(SetupForm_base):
 
                             try:
                                 if read:
-                                    self.fax_number = unicode(d.getPhoneNum())
-                                    self.fax_name_company = unicode(d.getStationName())
+                                    self.fax_number = to_unicode(d.getPhoneNum())
+                                    self.fax_name_company = to_unicode(d.getStationName())
                                 else:
                                     d.setStationName(self.fax_name_company)
                                     d.setPhoneNum(self.fax_number)
 
                             except Error:
                                 error_text = self.__tr("<b>Device I/O Error</b><p>Could not communicate with device. Device may be busy.")
-                                log.error(unicode(error_text))
+                                log.error(to_unicode(error_text))
 
                                 if QMessageBox.critical(self,
                                                        self.caption(),
@@ -850,66 +860,61 @@ class SetupForm(SetupForm_base):
         finally:
             QApplication.restoreOverrideCursor()
 
+
+    #
+    # Updating firmware download for supported devices.
+    #
+    def flashFirmware(self):
+        if self.mq.get('fw-download', False):
+            try:
+                d = device.Device(self.device_uri)
+            except Error as e:
+                self.FailureUI(self.__tr("<b>Error opening device. Firmware download is Failed.</b><p>%s (%s)." % (e.msg, e.opt)))
+            else:
+                if d.downloadFirmware():
+                    log.info("Firmware download successful.\n")
+                else:
+                    self.FailureUI(self.__tr("<b>Firmware download is Failed.</b>"))
+                d.close()
+
+
     #
     # SETUP PRINTER/FAX
     #
 
     def setupPrinter(self):
+        status = cups.IPP_BAD_REQUEST
         QApplication.setOverrideCursor(QApplication.waitCursor)
 
-        cups.setPasswordPrompt("You do not have permission to add a printer.")
         #if self.ppd_file.startswith("foomatic:"):
         if not os.path.exists(self.ppd_file): # assume foomatic: or some such
-            status, status_str = cups.addPrinter(self.printer_name.encode('utf8'), self.device_uri,
-                self.location, '', self.ppd_file, self.desc)
+            add_prnt_args = (self.printer_name, self.device_uri,self.location, '', self.ppd_file, self.desc)
         else:
-            status, status_str = cups.addPrinter(self.printer_name.encode('utf8'), self.device_uri,
-                self.location, self.ppd_file, '', self.desc)
+            add_prnt_args = (self.printer_name, self.device_uri, self.location, self.ppd_file, '', self.desc)
+
+        status, status_str = cups.cups_operation(cups.addPrinter, GUI_MODE, 'qt3', self, *add_prnt_args)
 
         log.debug("addPrinter() returned (%d, %s)" % (status, status_str))
-        self.installed_print_devices = device.getSupportedCUPSDevices(['hp'])
+        log.debug(device.getSupportedCUPSDevices(['hp']))
 
-        log.debug(self.installed_print_devices)
-
-        if self.device_uri not in self.installed_print_devices or \
-            self.printer_name not in self.installed_print_devices[self.device_uri]:
-
-            self.FailureUI(self.__tr("<b>Printer queue setup failed.</b><p>Please restart CUPS and try again."))
+        if status != cups.IPP_OK:
+            self.FailureUI(self.__tr("<b>Printer queue setup failed.</b><p>Error : %s "%status_str))
         else:
-            # TODO:
-            #service.sendEvent(self.hpssd_sock, EVENT_CUPS_QUEUES_CHANGED, device_uri=self.device_uri)
-            pass
+            # sending Event to add this device in hp-systray
+            utils.sendEvent(EVENT_CUPS_QUEUES_ADDED,self.device_uri, self.printer_name)
 
         QApplication.restoreOverrideCursor()
+        return status
 
     def setupFax(self):
+        status = cups.IPP_BAD_REQUEST
         QApplication.setOverrideCursor(QApplication.waitCursor)
-
-        if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_MARVELL:
-            fax_ppd_name = "HP-Fax3-hplip" # Fixed width (2528 pixels) and 300dpi rendering
-            nick = "HP Fax 3"
-        if self.mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_SOAP:
-            fax_ppd_name = "HP-Fax2-hplip" # Fixed width (2528 pixels) and 300dpi rendering
-            nick = "HP Fax 2"
-        else:
-            fax_ppd_name = "HP-Fax-hplip" # Standard
-            nick = "HP Fax"
-
-        ppds = []
-
-        log.debug("Searching for fax file %s..." % fax_ppd_name)
-
-        ppd_dir = sys_conf.get('dirs', 'ppd')
-        for f in utils.walkFiles(ppd_dir, pattern="HP-Fax*.ppd*", abs_paths=True):
-            ppds.append(f)
-
-        for f in ppds:
-            if f.find(fax_ppd_name) >= 0:
-                fax_ppd = f
-                log.debug("Found PDD file: %s" % fax_ppd)
-                log.debug("Nickname: %s" % cups.getPPDDescription(fax_ppd))
-                break
-        else:
+        back_end, is_hp, bus, model, serial, dev_file, host, zc, port = \
+                device.parseDeviceURI(self.device_uri)
+        norm_model = models.normalizeModelName(model).lower()
+        fax_ppd,fax_ppd_name, nick = cups.getFaxPPDFile(self.mq, norm_model)
+        # Fax ppd not found
+        if not fax_ppd:
             QApplication.restoreOverrideCursor()
             log.error("Fax PPD file not found.")
 
@@ -921,7 +926,7 @@ class SetupForm(SetupForm_base):
 
                 while True:
                     ppd_dir = sys_conf.get('dirs', 'ppd')
-                    fax_ppd = unicode(QFileDialog.getOpenFileName(ppd_dir,
+                    fax_ppd = to_unicode(QFileDialog.getOpenFileName(ppd_dir,
                         "HP Fax PPD Files (*.ppd *.ppd.gz);;All Files (*)", self,
                         "open file dialog", "Choose the fax PPD file"))
 
@@ -940,7 +945,6 @@ class SetupForm(SetupForm_base):
             else: # Quit
                 return
 
-        cups.setPasswordPrompt("You do not have permission to add a fax device.")
         if not os.path.exists(fax_ppd):
             status, status_str = cups.addPrinter(self.fax_name.encode('utf8'),
                 self.fax_uri, self.fax_location, '', fax_ppd,  self.fax_desc)
@@ -949,26 +953,22 @@ class SetupForm(SetupForm_base):
                 self.fax_uri, self.fax_location, fax_ppd, '', self.fax_desc)
 
         log.debug("addPrinter() returned (%d, %s)" % (status, status_str))
-        self.installed_fax_devices = device.getSupportedCUPSDevices(['hpfax'])
+        log.debug(device.getSupportedCUPSDevices(['hpfax']))
 
-        log.debug(self.installed_fax_devices)
-
-        if self.fax_uri not in self.installed_fax_devices or \
-            self.fax_name not in self.installed_fax_devices[self.fax_uri]:
-
-            self.FailureUI(self.__tr("<b>Fax queue setup failed.</b><p>Please restart CUPS and try again."))
+        if status != cups.IPP_OK:
+            self.FailureUI(self.__tr("<b>Fax queue setup failed.</b><p>Error : %s "%status_str))
         else:
-            pass
-            # TODO:
-            #service.sendEvent(self.hpssd_sock, EVENT_CUPS_QUEUES_CHANGED, device_uri=self.fax_uri)
+            # sending Event to add this device in hp-systray
+            utils.sendEvent(EVENT_CUPS_QUEUES_ADDED,self.fax_uri, self.fax_name)
 
         QApplication.restoreOverrideCursor()
+        return status
 
     def accept(self):
         if self.print_test_page:
             try:
                 d = device.Device(self.device_uri)
-            except Error, e:
+            except Error as e:
                 self.FailureUI(self.__tr("<b>Device error:</b><p>%s (%s)." % (e.msg, e.opt)))
 
             else:
@@ -982,7 +982,7 @@ class SetupForm(SetupForm_base):
 
                         try:
                             d.printTestPage(self.printer_name)
-                        except Error, e:
+                        except Error as e:
                             if e.opt == ERROR_NO_CUPS_QUEUE_FOUND_FOR_DEVICE:
                                 self.FailureUI(self.__tr("<b>No CUPS queue found for device.</b><p>Please install the printer in CUPS and try again."))
                             else:
@@ -999,7 +999,7 @@ class SetupForm(SetupForm_base):
         QWizard.reject(self)
 
     def FailureUI(self, error_text):
-        log.error(unicode(error_text).replace("<b>", "").replace("</b>", "").replace("<p>", " "))
+        log.error(to_unicode(error_text).replace("<b>", "").replace("</b>", "").replace("<p>", " "))
         QMessageBox.critical(self,
                              self.caption(),
                              error_text,
@@ -1057,11 +1057,18 @@ class PasswordDialog(QDialog):
 
         self.connect(self.okPushButton,SIGNAL("clicked()"),self.accept)
         self.connect(self.passwordLineEdit,SIGNAL("returnPressed()"),self.accept)
+
+    def setDefaultUsername(self, defUser, allowUsernameEdit = True):
+        self.usernameLineEdit.setText(defUser)
+        if not allowUsernameEdit:
+            self.usernameLineEdit.setReadOnly(True)
+            self.usernameLineEdit.setPaletteBackgroundColor(QColor("lightgray"))
+
     def getUsername(self):
-        return unicode(self.usernameLineEdit.text())
+        return to_unicode(self.usernameLineEdit.text())
 
     def getPassword(self):
-        return unicode(self.passwordLineEdit.text())
+        return to_unicode(self.passwordLineEdit.text())
 
     def languageChange(self):
         self.setCaption(self.__tr("HP Device Manager - Enter Username/Password"))
@@ -1074,10 +1081,12 @@ class PasswordDialog(QDialog):
         return qApp.translate("PasswordDialog",s,c)
 
 
-
-def showPasswordUI(prompt):
+def showPasswordUI(prompt, userName=None, allowUsernameEdit=True):
     try:
         dlg = PasswordDialog(prompt, None)
+
+        if userName != None:
+            dlg.setDefaultUsername(userName, allowUsernameEdit)
 
         if dlg.exec_loop() == QDialog.Accepted:
             return (dlg.getUsername(), dlg.getPassword())
@@ -1086,3 +1095,15 @@ def showPasswordUI(prompt):
         pass
 
     return ("", "")
+
+
+def FailureMessageUI(prompt):
+    try:
+        dlg = SetupForm("usb", "")
+#        dlg = PasswordDialog(prompt, None)
+        dlg.FailureUI( prompt)
+
+    finally:
+        pass
+
+

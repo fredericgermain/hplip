@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,8 +23,9 @@
 
 # Local
 from base.g import *
-from ui_utils import *
+from .ui_utils import *
 from base import device
+from base.sixext import  to_unicode
 
 # Qt
 from PyQt4.QtCore import *
@@ -150,7 +151,7 @@ class DeviceUriComboBox(QWidget):
         if self.updating:
             return
 
-        self.device_uri = unicode(t)
+        self.device_uri = to_unicode(t)
         if self.device_uri:
             #user_conf.set('last_used', 'device_uri', self.device_uri)
             self.user_settings.last_used_device_uri = self.device_uri

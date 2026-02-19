@@ -1,7 +1,7 @@
 /*****************************************************************************\
   SystemServices.cpp : Implementation of SystemServices class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -30,16 +30,20 @@
 
 #include "CommonDefinitions.h"
 #include "SystemServices.h"
+#include "utils.h"
 
-SystemServices::SystemServices(int iLogLevel, int job_id) : m_iLogLevel(iLogLevel)
+SystemServices::SystemServices(int iLogLevel, int job_id, char* user_name) : m_iLogLevel(iLogLevel)
 {
     m_fp = NULL;
-    if (iLogLevel & SAVE_PCL_FILE)
+    if (iLogLevel & SAVE_OUT_FILE)
     {
-        char    fname[32];
-        sprintf(fname, "/tmp/hpcups_job%d.out", job_id);
-        m_fp = fopen(fname, "w");
-        chmod(fname, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+        char    fname[MAX_FILE_PATH_LEN];
+        sprintf(fname, "%s/hpcups_%s_out_job%d_XXXXXX",CUPS_TMP_DIR, user_name, job_id);
+        createTempFile(fname, &m_fp);
+        if (m_fp)
+        {
+            chmod(fname, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
+        }
     }
 }
 
@@ -56,12 +60,13 @@ DRIVER_ERROR SystemServices::Send(const BYTE *pData, int iLength)
     if (m_fp)
     {
         fwrite (pData, 1, iLength, m_fp);
-        if (!(m_iLogLevel & SEND_TO_PRINTER_ALSO))
-        {
-            return NO_ERROR;
-        }
     }
-    write (STDOUT_FILENO, pData, iLength);
+
+    if ( !(m_iLogLevel & DONT_SEND_TO_BACKEND) )
+    {
+        write (STDOUT_FILENO, pData, iLength);
+    }
+
     return NO_ERROR;
 }
 

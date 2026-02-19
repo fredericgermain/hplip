@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #
 # Author: Don Welch
 #
-
+from __future__ import print_function
 __version__ = '5.1'
 __title__ = 'HPLIP Installer'
 __mod__ = 'hplip-install'
@@ -36,7 +36,7 @@ import re
 
 # Local
 from base.g import *
-from base import utils
+from base import utils, os_utils
 
 
 USAGE = [(__doc__, "", "name", True),
@@ -85,6 +85,12 @@ restricted_override = False
 enable = []
 disable = []
 
+if((re.search(' ',os.getcwd()))!= None):
+        log.info("Current hplip source directory path has space character in it. Please update path by removing space characters. Example: Change %s.run to %s.run" % (os.getcwd(),(os.getcwd()).replace(' ','')))
+        cmd = "rm -r ../%s" % (os.getcwd()).rsplit('/').pop()
+        os_utils.execute(cmd)
+        sys.exit(0)
+
 try:
     opts, args = getopt.getopt(sys.argv[1:], 'hl:giatxdq:nr:b',
         ['help', 'help-rest', 'help-man', 'help-desc', 'gui', 'lang=',
@@ -92,7 +98,7 @@ try:
         'network', 'retries=', 'enable=', 'disable=',
         'no-qt4', 'policykit', 'no-policykit', 'debug'])
 
-except getopt.GetoptError, e:
+except getopt.GetoptError as e:
     log.error(e.msg)
     usage()
     sys.exit(1)
@@ -114,7 +120,7 @@ for o, a in opts:
         language = a.lower()
 
     elif o == '--help-desc':
-        print __doc__,
+        print(__doc__, end=' ')
         sys.exit(0)
 
     elif o in ('-l', '--logging'):

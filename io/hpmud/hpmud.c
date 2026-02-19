@@ -2,7 +2,7 @@
 
   hpmud.cpp - multi-point transport driver
  
-  (c) 2004-2007 Copyright Hewlett-Packard Development Company, LP
+  (c) 2004-2007 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,6 +21,8 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+  Author: Naga Samrat Chowdary Narla,
+  Contributor: Sarbeswar Meher
 \*****************************************************************************/
 
 #include "hpmud.h"
@@ -84,7 +86,9 @@ void __attribute__ ((visibility ("hidden"))) sysdump(const void *data, int size)
 int __attribute__ ((visibility ("hidden"))) is_hp(const char *id)
 {
    char *pMf;
-
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    if ((pMf = strstr(id, "MFG:")) != NULL)
       pMf+=4;
    else if ((pMf = strstr(id, "MANUFACTURER:")) != NULL)
@@ -93,7 +97,9 @@ int __attribute__ ((visibility ("hidden"))) is_hp(const char *id)
       return 0;
 
    if ((strncasecmp(pMf, "HEWLETT-PACKARD", 15) == 0) ||
-      (strncasecmp(pMf, "APOLLO", 6) == 0) || (strncasecmp(pMf, "HP", 2) == 0))
+      (strncasecmp(pMf, "APOLLO", 6) == 0) || 
+      (strncasecmp(pMf, "HP", 2) == 0) ||
+      (strncasecmp(pMf, "DEX", 3) == 0))
    {
       return 1;  /* found HP product */
    }
@@ -105,6 +111,10 @@ int __attribute__ ((visibility ("hidden"))) generalize_model(const char *sz, cha
    const char *pMd=sz;
    int i, j, dd=0;
 
+   if (sz == 0 || sz[0] == 0)
+        return 0;
+
+    
    for (i=0; pMd[i] == ' ' && i < bufSize; i++);  /* eat leading white space */
 
    for (j=0; (pMd[i] != 0) && (pMd[i] != ';') && (j < bufSize); i++)
@@ -136,7 +146,10 @@ int __attribute__ ((visibility ("hidden"))) generalize_serial(const char *sz, ch
 {
    const char *pMd=sz;
    int i, j;
-
+    
+   if (sz == 0 || sz[0] == 0)
+        return 0;
+    
    for (i=0; pMd[i] == ' ' && i < bufSize; i++);  /* eat leading white space */
 
    for (j=0; (pMd[i] != 0) && (i < bufSize); i++)
@@ -147,7 +160,15 @@ int __attribute__ ((visibility ("hidden"))) generalize_serial(const char *sz, ch
    for (i--; buf[i] == ' ' && i > 0; i--);  /* eat trailing white space */
 
    buf[++i] = 0;
-
+   /*sanitize the serial number. RFC-3986 Valid Serial number character set: [A-Za-z0-9_-]*/
+   for (i=0; i < bufSize && buf[i]; i++) 
+   {
+      if ( !(isalnum(buf[i]) || buf[i] == '-' || buf[i] == '_' ) ) 
+      {
+         DBG("Found invalid character %s in device serial number \n",buf[i]);
+         buf[i] = '\0';
+      }
+   }
    return i;   /* length does not include zero termination */
 }
 
@@ -157,6 +178,9 @@ int __attribute__ ((visibility ("hidden"))) get_uri_serial(const char *uri, char
    char *p;
    int i;
 
+   if (uri == 0 || uri[0] == 0)
+      return 0;
+    
    buf[0] = 0;
 
    if ((p = strcasestr(uri, "serial=")) != NULL)
@@ -206,6 +230,25 @@ enum HPMUD_RESULT __attribute__ ((visibility ("hidden"))) service_to_channel(mud
    else if (strncasecmp(sn, "hp-marvell-fax", 14) == 0)
    {
       *index = HPMUD_MARVELL_FAX_CHANNEL;
+   }
+   else if (strncasecmp(sn, "hp-ledm-scan", 12) == 0)
+   {
+      *index = HPMUD_LEDM_SCAN_CHANNEL;
+   }
+   else if (strncasecmp(sn, "hp-marvell-ews", 11) == 0)
+   {
+       *index = HPMUD_MARVELL_EWS_CHANNEL;
+   }
+   else if (strncasecmp(sn, "hp-ipp", 6) == 0)
+   {
+       if (strncasecmp(sn, "hp-ipp2", 7) == 0)
+            *index = HPMUD_IPP_CHANNEL2;
+       else
+            *index = HPMUD_IPP_CHANNEL;
+   }
+   else if (strncasecmp(sn, "hp-escl-scan", 12) == 0)
+   {
+      *index = HPMUD_ESCL_SCAN_CHANNEL;
    }
    /* All the following services require MLC/1284.4. */
    else if (pd->io_mode == HPMUD_RAW_MODE || pd->io_mode == HPMUD_UNI_MODE)
@@ -259,16 +302,17 @@ bugout:
    return stat;
 }
 
+
 static int new_device(const char *uri, enum HPMUD_IO_MODE mode, int *result)
 {
    int index=0;      /* device[0] is unused */
    int i=1;
 
-   if (uri[0] == 0)
+   if (uri == 0 || uri[0] == 0)
       return 0;
-
+   
    pthread_mutex_lock(&msp->mutex);
-
+   
    if (msp->device[i].index)
    {
       BUG("invalid device_open state\n");        /* device is already open for this client, one device per session */
@@ -299,8 +343,10 @@ static int new_device(const char *uri, enum HPMUD_IO_MODE mode, int *result)
    {
       BUG("invalid uri %s\n", uri);
       *result = HPMUD_R_INVALID_URI;
+      index = 0;
       goto bugout;
    }
+   *result = HPMUD_R_OK;
    msp->device[i].io_mode = mode;
    msp->device[i].index = index;
    msp->device[i].channel_cnt = 0;
@@ -328,6 +374,8 @@ static int del_device(HPMUD_DEVICE index)
 int device_cleanup(mud_session *ps)
 {
    int i, dd=1;
+
+   if (!ps) return 0;
 
    if(!ps->device[dd].index)
       return 0;          /* nothing to do */
@@ -371,6 +419,9 @@ int hpmud_get_model(const char *id, char *buf, int buf_size)
 {
    char *pMd;
 
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    buf[0] = 0;
 
    if ((pMd = strstr(id, "MDL:")) != NULL)
@@ -389,6 +440,9 @@ int hpmud_get_raw_model(char *id, char *raw, int rawSize)
    char *pMd;
    int i;
 
+   if (id == 0 || id[0] == 0)
+        return 0;
+    
    raw[0] = 0;
 
    if ((pMd = strstr(id, "MDL:")) != NULL)
@@ -410,6 +464,9 @@ int hpmud_get_uri_model(const char *uri, char *buf, int buf_size)
 {
    char *p;
    int i;
+
+   if (uri == 0 || uri[0] == 0)
+     return 0;
 
    buf[0] = 0;
 
@@ -437,12 +494,17 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
    char ip[HPMUD_LINE_SIZE];
 #endif
 
+   if (uri == 0 || uri[0] == 0)
+     return 0;
+
    buf[0] = 0;
 
    if ((p = strcasestr(uri, "device=")) != NULL)
       p+=7;
    else if ((p = strcasestr(uri, "ip=")) != NULL)
       p+=3;
+   else if ((p = strcasestr(uri, "hostname=")) != NULL)
+      p+=9;
    else if ((p = strcasestr(uri, "zc=")) != NULL)
    {
       p+=3;
@@ -453,11 +515,11 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
 
    if (zc)
    {
-#ifdef HAVE_LIBNETSNMP
-      if (hpmud_mdns_lookup(p, HPMUD_MDNS_TIMEOUT, ip) != HPMUD_R_OK)
-	 return 0;
-      for (i=0; (ip[i] != 0) && (i < buf_size); i++)
-         buf[i] = ip[i];
+#ifdef HAVE_LIBAVAHI
+    if (avahi_lookup(p) != AVAHI_STATUS_OK)
+        return 0;
+    for (i=0; (ipAddressBuff[i] != 0) && (i < buf_size); i++)
+        buf[i] = ipAddressBuff[i];
 #else
       return 0;
 #endif
@@ -566,13 +628,15 @@ enum HPMUD_RESULT hpmud_probe_devices(enum HPMUD_BUS_ID bus, char *buf, int buf_
    int len=0;
 
    DBG("[%d] hpmud_probe_devices() bus=%d\n", getpid(), bus);
-
+   if (buf == NULL || buf_size <= 0)
+        return HPMUD_R_INVALID_LENGTH;
+    
    buf[0] = 0;
    *cnt = 0;
 
    if (bus == HPMUD_BUS_USB)
    {
-      len = musb_probe_devices(buf, buf_size, cnt);
+      len = musb_probe_devices(buf, buf_size, cnt, HPMUD_AIO);
    }
 #ifdef HAVE_PPORT
    else if (bus == HPMUD_BUS_PARALLEL)
@@ -582,7 +646,32 @@ enum HPMUD_RESULT hpmud_probe_devices(enum HPMUD_BUS_ID bus, char *buf, int buf_
 #endif
    else if (bus == HPMUD_BUS_ALL)
    {
-      len = musb_probe_devices(buf, buf_size, cnt);
+      len = musb_probe_devices(buf, buf_size, cnt, HPMUD_AIO);
+#ifdef HAVE_PPORT
+      len += pp_probe_devices(buf+len, buf_size-len, cnt);
+#endif
+   }
+
+   *bytes_read = len;
+
+   return HPMUD_R_OK;
+}
+
+enum HPMUD_RESULT hpmud_probe_printers(enum HPMUD_BUS_ID bus, char *buf, int buf_size, int *cnt, int *bytes_read)
+{
+   int len=0;
+
+   DBG("[%d] hpmud_probe_printers() bus=%d\n", getpid(), bus);
+
+   if (buf == NULL || buf_size <= 0)
+        return HPMUD_R_INVALID_LENGTH;
+    
+   buf[0] = 0;
+   *cnt = 0;
+
+   if (bus == HPMUD_BUS_ALL)
+   {
+      len = musb_probe_devices(buf, buf_size, cnt, HPMUD_PRINTER);
 #ifdef HAVE_PPORT
       len += pp_probe_devices(buf+len, buf_size-len, cnt);
 #endif
@@ -633,7 +722,7 @@ bugout:
 enum HPMUD_RESULT hpmud_write_channel(HPMUD_DEVICE dd, HPMUD_CHANNEL cd, const void *buf, int size, int sec_timeout, int *bytes_wrote)
 {
    enum HPMUD_RESULT stat = HPMUD_R_INVALID_STATE;
-
+   sec_timeout = 10; //hplip-1608, http write timeout issue for GEMS 2.0 
    DBG("[%d] hpmud_channel_write() dd=%d cd=%d buf=%p size=%d sectime=%d\n", getpid(), dd, cd, buf, size, sec_timeout);
 
    if (dd <= 0 || dd > HPMUD_DEVICE_MAX || msp->device[dd].index != dd ||
@@ -689,4 +778,3 @@ enum HPMUD_RESULT hpmud_get_dstat(HPMUD_DEVICE dd, struct hpmud_dstat *ds)
 bugout:
    return stat;
 }
-

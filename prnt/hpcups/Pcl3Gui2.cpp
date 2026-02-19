@@ -1,7 +1,7 @@
 /*****************************************************************************\
   Pcl3Gui2.cpp : Implementation of Pcl3Gui2 class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -39,7 +39,7 @@ Pcl3Gui2::Pcl3Gui2() : Encapsulator()
 {
     speed_mech_enabled = true;
     m_run_ernie_filter = true;
-    crd_type = eCrd_both;
+    crd_type = eCrd_color_only;   // pcl3 printers support RGB only ref:hplip-1701
     strcpy(m_szLanguage, "PCL3GUI");
 }
 
@@ -113,6 +113,7 @@ DRIVER_ERROR Pcl3Gui2::StartPage(JobAttributes *pJA)
     DRIVER_ERROR    err = NO_ERROR;
     char            szStr[256];
     int             top_margin = 0;
+    unsigned int unit_of_measure = 300;
     page_number++;
 
 //  Under windows, pJA address may have changed, re-init here.
@@ -131,7 +132,7 @@ DRIVER_ERROR Pcl3Gui2::StartPage(JobAttributes *pJA)
     int    i = strlen(szStr);
     memcpy(szStr+i, MediaSubtypeSeq, sizeof(MediaSubtypeSeq));
     i += sizeof(MediaSubtypeSeq);
-    szStr[i++] = (char) (m_pQA->media_subtype & 0xFFFF) >> 8;
+    szStr[i++] = (char) (m_pQA->media_subtype >> 8);
     szStr[i++] = (char) m_pQA->media_subtype & 0xFF;
     addToHeader((const BYTE *) szStr, i);
 
@@ -148,8 +149,11 @@ DRIVER_ERROR Pcl3Gui2::StartPage(JobAttributes *pJA)
 	*cur_pcl_buffer_ptr++ = (BYTE) m_pJA->color_mode;
     }
 
-    sprintf(szStr,"\033&u%dD", m_pQA->horizontal_resolution);
+    unit_of_measure = (m_pQA->horizontal_resolution < m_pQA->actual_vertical_resolution) ? m_pQA->horizontal_resolution : m_pQA->actual_vertical_resolution;
+    sprintf(szStr,"\033&u%dD", unit_of_measure);
     addToHeader((const BYTE *) szStr, strlen(szStr));
+
+    
     sprintf(szStr,"\033*t%dR", m_pQA->actual_vertical_resolution);
     addToHeader((const BYTE *) szStr, strlen(szStr));
 
@@ -181,23 +185,35 @@ DRIVER_ERROR Pcl3Gui2::StartPage(JobAttributes *pJA)
 
     if (m_pJA->print_borderless) {
         BYTE cBuf[4];
-        BYTE TopOverSpraySeq[]  = {0x1b, 0x2A, 0x6F, 0x35, 0x57, 0x0E, 0x02, 0x00};
-                                // "Esc*o5W 0E 02 00 00 00" Top edge overspray for full-bleed printing
+        
+        // For SPD products
+        if (m_pJA->HPSPDClass == 1)
+        {
+            BYTE TopOverSpraySeq[]  = {0x1b, 0x2A, 0x6F, 0x35, 0x57, 0x0E, 0x0D, 0x00, 0x00, 0x01};
+                                    // "Esc*o5W 0E 0D 00 00 01" Top edge overspray for full-bleed printing
 
-        BYTE LeftOverSpraySeq[] = {0x1b, 0x2A, 0x6F, 0x35, 0x57, 0x0E, 0x01, 0x00};
-                                // "Esc*o5W 0E 01 00 00 00" Left edge overspray for full-bleed printing
+            addToHeader((const BYTE *) TopOverSpraySeq, sizeof(TopOverSpraySeq));
+        }
+        else
+        {
+            BYTE TopOverSpraySeq[]  = {0x1b, 0x2A, 0x6F, 0x35, 0x57, 0x0E, 0x02, 0x00};
+                                    // "Esc*o5W 0E 02 00 00 00" Top edge overspray for full-bleed printing
 
-        cBuf[1] = (m_pMA->top_overspray) & 0xFF;
-        cBuf[0] = (m_pMA->top_overspray) >> 8;
+            BYTE LeftOverSpraySeq[] = {0x1b, 0x2A, 0x6F, 0x35, 0x57, 0x0E, 0x01, 0x00};
+                                    // "Esc*o5W 0E 01 00 00 00" Left edge overspray for full-bleed printing
 
-        addToHeader((const BYTE *) TopOverSpraySeq, sizeof(TopOverSpraySeq));
-        addToHeader((const BYTE *) cBuf, 2);
+            cBuf[1] = (m_pMA->top_overspray) & 0xFF;
+            cBuf[0] = (m_pMA->top_overspray) >> 8;
 
-        cBuf[1] = (m_pMA->left_overspray) & 0xFF;
-        cBuf[0] = (m_pMA->left_overspray) >> 8;
+            addToHeader((const BYTE *) TopOverSpraySeq, sizeof(TopOverSpraySeq));
+            addToHeader((const BYTE *) cBuf, 2);
 
-        addToHeader((const BYTE *) LeftOverSpraySeq, sizeof(LeftOverSpraySeq));
-        addToHeader((const BYTE *) cBuf, 2);
+            cBuf[1] = (m_pMA->left_overspray) & 0xFF;
+            cBuf[0] = (m_pMA->left_overspray) >> 8;
+
+            addToHeader((const BYTE *) LeftOverSpraySeq, sizeof(LeftOverSpraySeq));
+            addToHeader((const BYTE *) cBuf, 2);
+        }
     }
 
 //  Now send media pre-load command
@@ -248,9 +264,11 @@ DRIVER_ERROR Pcl3Gui2::encapsulateRaster(BYTE *raster, unsigned int length, COLO
     char    scratch[20];
     int     scratchLen;
     char    c = 'W';
+    /* commented below code for rgb mode10 compresion on Lebi ref-1701
     if (crd_type == eCrd_color_only) {
         return NO_ERROR;
     }
+    */
     if (c_type == COLORTYPE_BLACK && crd_type == eCrd_both) {
         c = 'V';
     }

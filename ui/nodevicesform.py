@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,11 +26,11 @@ import os.path
 from base.g import *
 from base import utils
 from prnt import cups
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from nodevicesform_base import NoDevicesForm_base
+from .nodevicesform_base import NoDevicesForm_base
 
 
 
@@ -43,7 +43,7 @@ class NoDevicesForm(NoDevicesForm_base):
 
     def CUPSButton_clicked(self):
         self.close()
-        utils.openURL("http://localhost:631/admin?op=add-printer")
+        utils.openURL("http://localhost:631/admin")
 
 
     def ExitButton_clicked(self):
@@ -59,7 +59,7 @@ class NoDevicesForm(NoDevicesForm_base):
             cmd = 'python ./setup.py -u'
 
         log.debug(cmd)
-        utils.run(cmd, log_output=True, password_func=None, timeout=1)
+        utils.run(cmd)
 
         try:
             self.parent().RescanDevices()

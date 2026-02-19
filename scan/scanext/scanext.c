@@ -1,7 +1,7 @@
 /*******************************************************************
 scanext - Python extension class for SANE
 
-Portions (c) Copyright 2007 Hewlett-Packard Development Company, L.P.
+Portions (c) Copyright 2015 HP Development Company, L.P.
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -46,11 +46,49 @@ PERFORMANCE OF THIS SOFTWARE.
 
 
 /* _ScanDevice objects */
+#define PY_SSIZE_T_CLEAN
 
 #include "Python.h"
 #include "sane.h"
 #include <sys/time.h>
 
+#if PY_MAJOR_VERSION >= 3
+    #define  PyInt_AsLong  PyLong_AsLong
+    #define  PyInt_FromLong PyLong_FromLong
+    #define  PyInt_Check PyLong_Check
+    #define  PyUNICODE_FromUNICODE PyUnicode_FromString
+    #define  PyUNICODE_CHECK PyUnicode_Check
+    #define FORMAT_STRING "(iy#)"
+
+    #if (PY_VERSION_HEX < 0x03030000)
+        #define PyUNICODE_AsBYTES(x) PyBytes_AsString(PyUnicode_AsUTF8String(x))
+    #else
+        #define PyUNICODE_AsBYTES PyUnicode_AsUTF8
+    #endif 
+    
+    #define MOD_ERROR_VAL NULL
+    #define MOD_SUCCESS_VAL(val) val
+    #define MOD_INIT(name) PyMODINIT_FUNC PyInit_##name(void)
+    #define MOD_DEF(ob, name, doc, methods) \
+          static struct PyModuleDef moduledef = { \
+            PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+          ob = PyModule_Create(&moduledef);	\
+
+#else
+    #define  PyUNICODE_FromUNICODE PyString_FromString
+    #define  PyUNICODE_CHECK PyString_Check
+    #define  PyUNICODE_AsBYTES PyString_AsString
+    #define FORMAT_STRING "(is#)"
+
+    #define MOD_ERROR_VAL
+    #define MOD_SUCCESS_VAL(val)
+    #define MOD_INIT(name) void init##name(void)
+    #define MOD_DEF(ob, name, doc, methods) \
+          ob = Py_InitModule3(name, methods, doc);	\
+
+#endif
+int multipick;
+static char scanext_documentation[] = "Python extension for HP scan sane driver";
 static PyObject *ErrorObject;
 
 typedef struct
@@ -102,7 +140,7 @@ static PyObject *getErrorMessage(PyObject * self, PyObject * args)
     return Py_BuildValue("s", sane_strstatus (st));
 }
 
-staticforward PyTypeObject ScanDevice_type;
+static PyTypeObject ScanDevice_type;
 
 #define SaneDevObject_Check(v)  ((v)->ob_type == &ScanDevice_type)
 
@@ -207,8 +245,10 @@ static PyObject *startScan (_ScanDevice * self, PyObject * args)
     Py_END_ALLOW_THREADS
 
     if (st != SANE_STATUS_GOOD &&
+        st != SANE_STATUS_JAMMED &&
         st != SANE_STATUS_EOF &&
-        st != SANE_STATUS_NO_DOCS)
+        st != SANE_STATUS_NO_DOCS &&
+        st != SANE_STATUS_MULTIPICK)
           return raiseSaneError(st);
 
     return Py_BuildValue("i", st);
@@ -295,7 +335,7 @@ static PyObject *getOptions (_ScanDevice * self, PyObject * args)
 
                 for (j = 0; d->constraint.string_list[j] != NULL; j++)
                     PyList_Append (constraint,
-                                   PyString_FromString (d->constraint.
+                                   PyUNICODE_FromUNICODE (d->constraint.
                                                         string_list[j]));
                 break;
             }
@@ -367,7 +407,18 @@ static PyObject *setOption (_ScanDevice * self, PyObject * args)
     SANE_Int i;
     PyObject *value;
     int n;
+    multipick = 1;
 
+if(1)
+{
+SANE_Bool b = SANE_TRUE;
+    sane_control_option (self->h, 9, SANE_ACTION_SET_VALUE, (void *)&b, &i);
+}
+else
+{
+SANE_Bool b = SANE_FALSE;
+    sane_control_option (self->h, 9, SANE_ACTION_SET_VALUE, (void *)&b, &i);
+}
     if (!PyArg_ParseTuple (args, "iO", &n, &value))
         raiseError("Invalid arguments.");
 
@@ -406,11 +457,11 @@ static PyObject *setOption (_ScanDevice * self, PyObject * args)
             break;
 
         case (SANE_TYPE_STRING):
-            if (!PyString_Check (value))
+            if (!PyUNICODE_CHECK (value))
                 return raiseError("SANE_String requires a a string.");
 
             SANE_String s = malloc (d->size + 1);
-            strncpy (s, PyString_AsString (value), d->size - 1);
+            strncpy (s, PyUNICODE_AsBYTES (value), d->size - 1);
             ((SANE_String) s)[d->size - 1] = 0;
             st = sane_control_option (self->h, n, SANE_ACTION_SET_VALUE, (void *)s, &i);
             free(s);
@@ -449,7 +500,7 @@ static PyObject *setAutoOption (_ScanDevice * self, PyObject * args)
     return Py_BuildValue ("i", i);
 }
 
-#define MAX_READSIZE 32768
+#define MAX_READSIZE 65536
 
 static PyObject *readScan (_ScanDevice * self, PyObject * args)
 {
@@ -475,14 +526,15 @@ static PyObject *readScan (_ScanDevice * self, PyObject * args)
 
     if (st != SANE_STATUS_GOOD &&
         st != SANE_STATUS_EOF &&
-        st != SANE_STATUS_NO_DOCS)
+        st != SANE_STATUS_NO_DOCS &&
+        st != SANE_STATUS_MULTIPICK)
     {
         sane_cancel(self->h);
         //Py_BLOCK_THREADS
         return raiseSaneError(st);
     }
 
-    return Py_BuildValue ("(iz#)", st, buffer, len);
+    return Py_BuildValue (FORMAT_STRING, st, buffer, len);
 }
 
 
@@ -501,28 +553,49 @@ static PyMethodDef ScanDevice_methods[] = {
     {NULL, NULL}
 };
 
-static PyObject *getAttr (_ScanDevice * self, char *name)
-{
-    return Py_FindMethod (ScanDevice_methods, (PyObject *) self, name);
-}
 
-staticforward PyTypeObject ScanDevice_type = {
-    PyObject_HEAD_INIT (&PyType_Type) 0, /*ob_size */
-    "_ScanDevice",               /*tp_name */
-    sizeof (_ScanDevice),        /*tp_basicsize */
-    0,                          /*tp_itemsize */
-    /* methods */
-    (destructor) deAlloc,       /*tp_dealloc */
-    0,                          /*tp_print */
-    (getattrfunc) getAttr,      /*tp_getattr */
-    0,                          /*tp_setattr */
-    0,                          /*tp_compare */
-    0,                          /*tp_repr */
-    0,                          /*tp_as_number */
-    0,                          /*tp_as_sequence */
-    0,                          /*tp_as_mapping */
-    0,                          /*tp_hash */
+static PyTypeObject ScanDevice_type =
+{
+    PyVarObject_HEAD_INIT( &PyType_Type, 0 ) /* ob_size */
+    "_ScanDevice",                   /* tp_name */
+    sizeof(_ScanDevice ),              /* tp_basicsize */
+    0,                                     /* tp_itemsize */
+    ( destructor ) deAlloc,           /* tp_dealloc */
+    0,                                     /* tp_print */
+    0,                      /* tp_getattr */
+    0,                                     /* tp_setattr */
+    0,                                     /* tp_compare */
+    0,                                     /* tp_repr */
+    0,                                     /* tp_as_number */
+    0,                                     /* tp_as_sequence */
+    0,                                     /* tp_as_mapping */
+    0,                                     /* tp_hash */
+    0,                                     /* tp_call */
+    0,                                     /* tp_str */
+    PyObject_GenericGetAttr,               /* tp_getattro */
+    PyObject_GenericSetAttr,               /* tp_setattro */
+    0,                                     /* tp_as_buffer */
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,         /* tp_flags */
+    "Scan Device object",                 /* tp_doc */
+    0,                                     /* tp_traverse */
+    0,                                     /* tp_clear */
+    0,                                     /* tp_richcompare */
+    0,                                     /* tp_weaklistoffset */
+    0,                                     /* tp_iter */
+    0,                                     /* tp_iternext */
+    ScanDevice_methods,         /*job_methods, */           /* tp_methods */
+    0,                       /* tp_members */
+    0,                                     /* tp_getset */
+    0,                                     /* tp_base */
+    0,                                     /* tp_dict */
+    0,                                     /* tp_descr_get */
+    0,                                     /* tp_descr_set */
+    0,                                     /* tp_dictoffset */
+    0,                                     /* tp_init */
+    0,                                     /* tp_alloc */
+    0,                                     /* tp_new */
 };
+
 
 /* --------------------------------------------------------------------- */
 
@@ -629,6 +702,14 @@ static PyObject *isOptionActive (PyObject * self, PyObject * args)
     return PyInt_FromLong (SANE_OPTION_IS_ACTIVE (cap));
 }
 
+static PyObject *setMultipick (PyObject * self, PyObject * args)
+{
+
+    if (!PyArg_ParseTuple (args, "i", &multipick))
+        raiseError("Invalid arguments");
+	Py_INCREF ( Py_None );
+    return Py_None;
+}
 static PyObject *isOptionSettable (PyObject * self, PyObject * args)
 {
     SANE_Int cap;
@@ -652,9 +733,9 @@ static PyMethodDef ScanExt_methods[] = {
     {"isOptionActive", isOptionActive, METH_VARARGS},
     {"isOptionSettable", isOptionSettable, METH_VARARGS},
     {"getErrorMessage", getErrorMessage, METH_VARARGS},
+    {"setMultipick", setMultipick, METH_VARARGS},
     {NULL, NULL}                /* sentinel */
 };
-
 
 static void insint (PyObject * d, char *name, int value)
 {
@@ -666,17 +747,38 @@ static void insint (PyObject * d, char *name, int value)
     Py_DECREF (v);
 }
 
-void initscanext (void)
-{
-    PyObject *m, *d;
+#if PY_MAJOR_VERSION >= 3
+    static struct PyModuleDef moduledef = {
+        PyModuleDef_HEAD_INIT,
+        "scanext",     /* m_name */
+        scanext_documentation,  /* m_doc */
+        -1,                  /* m_size */
+        ScanExt_methods,    /* m_methods */
+        NULL,                /* m_reload */
+        NULL,                /* m_traverse */
+        NULL,                /* m_clear */
+        NULL,                /* m_free */
+    };
 
-    /* Create the module and add the functions */
-    m = Py_InitModule ("scanext", ScanExt_methods);
+#endif
+
+
+MOD_INIT(scanext)  {
+    PyObject* mod ;
+    MOD_DEF(mod, "scanext", scanext_documentation, ScanExt_methods);
+    if (mod == NULL)
+    	return MOD_ERROR_VAL;
 
     /* Add some symbolic constants to the module */
-    d = PyModule_GetDict (m);
-    ErrorObject = PyString_FromString ("scanext.error");
+    PyObject* d = PyModule_GetDict(mod);
+    ErrorObject = PyErr_NewException("scanext.error", NULL, NULL); 
+    if (ErrorObject == NULL) 
+    {	
+         Py_DECREF(mod);	
+         return MOD_ERROR_VAL;
+    }
     PyDict_SetItemString (d, "error", ErrorObject);
+
 
     insint (d, "INFO_INEXACT", SANE_INFO_INEXACT);
     insint (d, "INFO_RELOAD_OPTIONS", SANE_INFO_RELOAD_OPTIONS);
@@ -737,6 +839,7 @@ void initscanext (void)
     insint (d, "SANE_STATUS_IO_ERROR", SANE_STATUS_IO_ERROR); // Error during device I/O.
     insint (d, "SANE_STATUS_NO_MEM", SANE_STATUS_NO_MEM); // Out of memory.
     insint (d, "SANE_STATUS_ACCESS_DENIED", SANE_STATUS_ACCESS_DENIED);  // Access to resource has been denied.
+    insint (d, "SANE_STATUS_MULTIPICK", SANE_STATUS_MULTIPICK);  // multipick error.
 
     // Maximum buffer size for read()
     insint(d, "MAX_READSIZE", MAX_READSIZE);
@@ -745,4 +848,5 @@ void initscanext (void)
     if (PyErr_Occurred ())
         Py_FatalError ("can't initialize module scanext");
 
+  return MOD_SUCCESS_VAL(mod);
 }

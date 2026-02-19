@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ljzjsmono.h : Interface for the LJZjsMono class
 
-  Copyright (c) 1996 - 2007, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2007, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -90,6 +90,12 @@ public:
         "HP LaserJet 1020\0"
         "HP LaserJet 1022\0"
         "HP LaserJet P2035\0"
+        "HP LaserJet P1102\0"
+		"HP LaserJet P1566\0"
+		"HP LaserJet P1606\0"
+        "HP LaserJet Professional M1136\0"
+        "HP LaserJet Professional M1132\0"
+        "HP LaserJet Professional M1212nf\0"
     ) {m_iPrinterType = eLJZjsMono;}
     inline Printer* CreatePrinter(SystemServices* pSS) const { return new LJZjsMono(pSS); }
 	inline PRINTER_TYPE GetPrinterType() const { return eLJZjsMono;}

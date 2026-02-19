@@ -2,7 +2,7 @@
 
   io.h - HP SANE backend for multi-function peripherals (libsane-hpaio)
 
-  (c) 2001-2006 Copyright Hewlett-Packard Development Company, LP
+  (c) 2001-2006 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,8 +21,8 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  Contributing Author: Don Welch, David Suffield 
-
+  Contributing Author: Don Welch, David Suffield, Naga Samrat Chowdary Narla,
+						Sarbeswar Meher
 \************************************************************************************/
 
 #if !defined(_IO_H)
@@ -39,6 +39,17 @@ int __attribute__ ((visibility ("hidden"))) ReadChannelEx(int deviceid, int chan
 #define EVENT_END_SCAN_JOB 2001
 #define EVENT_SCANNER_FAIL 2002
 #define EVENT_PLUGIN_FAIL 2003
+#define EVENT_SCAN_ADF_LOADED 2004
+#define EVENT_SCAN_TO_DESTINATION_NOTSET = 2005
+#define EVENT_SCAN_WAITING_FOR_PC = 2006
+#define EVENT_SCAN_ADF_JAM 2007
+#define EVENT_SCAN_ADF_DOOR_OPEN 2008
+#define EVENT_SCAN_CANCEL 2009
+#define EVENT_SIZE_WARNING 2010
+#define EVENT_SCAN_ADF_NO_DOCS 2011
+#define EVENT_SCAN_ADF_MISPICK 2012
+#define EVENT_SCAN_BUSY 2013
+#define EVENT_ERROR_NO_PROBED_DEVICES_FOUND  5018
 
 #define DBUS_INTERFACE "com.hplip.StatusService"
 #define DBUS_PATH "/"

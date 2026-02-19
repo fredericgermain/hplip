@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,7 +20,7 @@
 #
 
 from qt import *
-from aligntype6form1_base import AlignType6Form1_base
+from .aligntype6form1_base import AlignType6Form1_base
 
 class AlignType6Form1(AlignType6Form1_base):
     

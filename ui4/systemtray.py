@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -28,12 +28,11 @@ import signal
 import os.path
 import time
 
-
 # Local
 from base.g import *
 from base import device, utils, models
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # PyQt
 try:
@@ -43,7 +42,7 @@ except ImportError:
     log.error("Python bindings for Qt4 not found. Try using --qt3. Exiting!")
     sys.exit(1)
 
-from systrayframe import SystrayFrame
+from .systrayframe import SystrayFrame
 
 # dbus (required)
 try:
@@ -64,9 +63,12 @@ warnings.simplefilter("ignore", DeprecationWarning)
 # pynotify (optional)
 have_pynotify = True
 try:
-    import pynotify
+    import notify2 as pynotify
 except ImportError:
-    have_pynotify = False
+    try:
+        import pynotify
+    except ImportError:
+        have_pynotify = False
 
 
 TRAY_MESSAGE_DELAY = 10000
@@ -74,6 +76,8 @@ HIDE_INACTIVE_DELAY = 5000
 BLIP_DELAY = 2000
 SET_MENU_DELAY = 1000
 MAX_MENU_EVENTS = 10
+UPGRADE_CHECK_DELAY=24*60*60*1000        #1 day
+#CLEAN_EXEC_DELAY=4*60*60*1000            #4 Hrs
 
 ERROR_STATE_TO_ICON = {
     ERROR_STATE_CLEAR:        QSystemTrayIcon.Information,
@@ -130,7 +134,7 @@ class DeviceMenu(QMenu):
                 ess = device.queryString(e.event_code, 0)
 
                 a = QAction(QIcon(getStatusListIcon(error_state)[self.index]),
-                                    QString("%1 %2").arg(ess).arg(getTimeDeltaDesc(e.timedate)), self)
+                                    QString("%s %s"%(ess,getTimeDeltaDesc(e.timedate))), self)
 
                 if first:
                     f = a.font()
@@ -168,19 +172,19 @@ class HistoryDevice(QObject):
 
         if back_end == 'hp':
             self.device_type = DEVICE_TYPE_PRINTER
-            self.menu_text = self.__tr("%1 Printer (%2)").arg(self.model).arg(self.id)
+            self.menu_text = self.__tr("%s Printer (%s)"%(self.model,self.id))
 
         elif back_end == 'hpaio':
             self.device_type = DEVICE_TYPE_SCANNER
-            self.menu_text = self.__tr("%1 Scanner (%2)").arg(self.model).arg(self.id)
+            self.menu_text = self.__tr("%s Scanner (%s)"%(self.model,self.id))
 
         elif back_end == 'hpfax':
             self.device_type = DEVICE_TYPE_FAX
-            self.menu_text = self.__tr("%1 Fax (%2)").arg(self.model).arg(self.id)
+            self.menu_text = self.__tr("%s Fax (%s)"%(self.model,self.id))
 
         else:
             self.device_type = DEVICE_TYPE_UNKNOWN
-            self.menu_text = self.__tr("%1 (%2)").arg(self.model).arg(self.id)
+            self.menu_text = self.__tr("%s (%s)"%(self.model,self.id))
 
         self.mq = device.queryModelByURI(self.device_uri)
         self.index = 0
@@ -205,7 +209,14 @@ class HistoryDevice(QObject):
 class SystraySettingsDialog(QDialog):
     def __init__(self, parent, systray_visible, polling,
                  polling_interval, systray_messages,
-                 device_list=None):
+                 device_list=None,
+                 upgrade_notify=True,
+                 upgrade_pending_time=0,
+                 upgrade_last_update_time=0,
+                 upgrade_msg=""
+                 ):
+#                 upgrade_pending_update_time=0,
+
 
         QDialog.__init__(self, parent)
 
@@ -219,6 +230,10 @@ class SystraySettingsDialog(QDialog):
 
         self.polling = polling
         self.polling_interval = polling_interval
+        self.upgrade_notify =upgrade_notify
+        self.upgrade_last_update_time=upgrade_last_update_time
+        self.upgrade_pending_time=upgrade_pending_time
+        self.upgrade_msg=upgrade_msg
 
         self.initUi()
         self.SystemTraySettings.updateUi()
@@ -235,7 +250,10 @@ class SystraySettingsDialog(QDialog):
         self.SystemTraySettings.initUi(self.systray_visible,
                                        self.polling, self.polling_interval,
                                        self.device_list,
-                                       self.systray_messages)
+                                       self.systray_messages,
+                                       self.upgrade_notify,
+                                       self.upgrade_pending_time,
+                                       self.upgrade_msg)
 
         sizePolicy = QSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
         sizePolicy.setHorizontalStretch(0)
@@ -260,6 +278,9 @@ class SystraySettingsDialog(QDialog):
         #QMetaObject.connectSlotsByName(self)
 
         self.setWindowTitle(self.__tr("HP Device Manager - System Tray Settings"))
+        self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))
+#        pm = load_pixmap("hp_logo", "32x32")
+#        self.prop_icon = QIcon(pm)
 
 
     def acceptClicked(self):
@@ -268,11 +289,13 @@ class SystraySettingsDialog(QDialog):
         self.polling_interval = self.SystemTraySettings.polling_interval
         self.device_list = self.SystemTraySettings.device_list
         self.systray_messages = self.SystemTraySettings.systray_messages
+        self.upgrade_notify =self.SystemTraySettings.upgrade_notify
         self.accept()
 
 
     def __tr(self, s, c=None):
         return QApplication.translate("SystraySettingsDialog", s, c, QApplication.UnicodeUTF8)
+
 
 
 
@@ -315,6 +338,7 @@ class SystemTrayApp(QApplication):
         notifier = QSocketNotifier(self.read_pipe, QSocketNotifier.Read)
         QObject.connect(notifier, SIGNAL("activated(int)"), self.notifierActivated)
         QObject.connect(self.tray_icon, SIGNAL("activated(QSystemTrayIcon::ActivationReason)"), self.trayActivated)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         self.tray_icon.show()
 
         if self.user_settings.systray_visible == SYSTRAY_VISIBLE_SHOW_ALWAYS:
@@ -325,7 +349,23 @@ class SystemTrayApp(QApplication):
         self.tray_icon.setIcon(self.prop_active_icon)
         self.active_icon = True
 
+        if "--ignore-update-firsttime" not in args:
+            self.handle_hplip_updation()
+
         QTimer.singleShot(SET_MENU_DELAY, self.initDone)
+
+        self.update_timer = QTimer()
+        self.update_timer.connect(self.update_timer,SIGNAL("timeout()"),self.handle_hplip_updation)
+        self.update_timer.start(UPGRADE_CHECK_DELAY)
+
+        # Cleans the /var/log/hp/tmp directory
+        #self.handle_hplip_clean()
+        
+        #self.clean_timer = QTimer()
+        #self.clean_timer.connect(self.clean_timer,SIGNAL("timeout()"),self.handle_hplip_clean)
+        #self.clean_timer.start(CLEAN_EXEC_DELAY)
+        
+
 
 
     def initDone(self):
@@ -334,6 +374,8 @@ class SystemTrayApp(QApplication):
 
         self.setMenu()
 
+    def resetDevice(self):
+        devices.clear()
 
     def addDevice(self, device_uri):
         try:
@@ -342,6 +384,53 @@ class SystemTrayApp(QApplication):
             devices[device_uri] = HistoryDevice(device_uri)
         else:
             devices[device_uri].needs_update = True
+
+    def handle_hplip_clean(self):
+        log.debug("handle_hplip_clean ")
+        home_dir = sys_conf.get('dirs', 'home')
+        cmd = 'sh %s/hplip_clean.sh'%home_dir
+        os.system(cmd)
+        
+
+    def handle_hplip_updation(self):
+        log.debug("handle_hplip_updation upgrade_notify =%d"%(self.user_settings.upgrade_notify))
+        path = utils.which('hp-upgrade')
+        if self.user_settings.upgrade_notify is False:
+            log.debug("upgrade notification is disabled in systray ")
+            if path:
+                path = os.path.join(path, 'hp-upgrade')
+                log.debug("Running hp-upgrade: %s " % (path))
+                # this just updates the available version in conf file. But won't notify
+                os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--check')
+                time.sleep(5)
+                try:
+                    os.waitpid(0, os.WNOHANG)
+                except OSError:
+                   pass
+
+            return
+            
+            
+        current_time = time.time()
+    
+        if int(current_time) > self.user_settings.upgrade_pending_update_time:
+            path = utils.which('hp-upgrade')
+            if path:
+                path = os.path.join(path, 'hp-upgrade')
+                log.debug("Running hp-upgrade: %s " % (path))
+                os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--notify')
+                time.sleep(5)
+            else:
+                log.error("Unable to find hp-upgrade --notify on PATH.")
+        else:
+            log.debug("upgrade schedule time is not yet completed. schedule time =%d current time =%d " %(self.user_settings.upgrade_pending_update_time, current_time))
+        
+        try:
+            os.waitpid(0, os.WNOHANG)
+        except OSError:
+            pass
+
+
 
 
 
@@ -380,7 +469,7 @@ class SystemTrayApp(QApplication):
                     try:
                         self.service = self.session_bus.get_object('com.hplip.StatusService',
                                                                   "/com/hplip/StatusService")
-                    except DBusException:
+                    except dbus.DBusException:
                         log.warn("Unable to connect to StatusService. Retrying...")
 
                     t += 1
@@ -417,16 +506,41 @@ class SystemTrayApp(QApplication):
             return
 
         self.sendMessage('', '', EVENT_DEVICE_STOP_POLLING)
+#        sys_conf
+        cur_vers = sys_conf.get('hplip', 'version')
+        self.user_settings.load()
+        installed_time =time.strftime("%d-%m-%Y", time.localtime(self.user_settings.upgrade_last_update_time))
+        if utils.Is_HPLIP_older_version(cur_vers, self.user_settings.latest_available_version):
+            if int(time.time()) < self.user_settings.upgrade_pending_update_time :
+                postponed_time =time.strftime("%d-%m-%Y", time.localtime(self.user_settings.upgrade_pending_update_time))
+                upgrade_msg ="HPLIP-%s version was installed on %s.\n\nNew version of HPLIP-%s is available for upgrade. HPLIP upgrade is scheduled on %s." %(cur_vers,installed_time , self.user_settings.latest_available_version, postponed_time)
+            elif self.user_settings.upgrade_last_update_time:
+                upgrade_msg ="HPLIP-%s version was installed on %s.\n\nNew version of HPLIP-%s is available for upgrade." %(cur_vers,installed_time , self.user_settings.latest_available_version)
+            else:
+                upgrade_msg ="HPLIP-%s version was installed.\n\nNew version of HPLIP-%s is available for upgrade." %(cur_vers, self.user_settings.latest_available_version)
+        elif self.user_settings.upgrade_last_update_time:
+            upgrade_msg ="HPLIP-%s version was installed on %s."%(cur_vers, installed_time)
+        else: 
+            upgrade_msg ="HPLIP-%s version was installed."%(cur_vers)
+            
+        
         try:
             dlg = SystraySettingsDialog(self.menu, self.user_settings.systray_visible,
                                         self.user_settings.polling, self.user_settings.polling_interval,
                                         self.user_settings.systray_messages,
-                                        self.user_settings.polling_device_list)
+                                        self.user_settings.polling_device_list,
+                                        self.user_settings.upgrade_notify,
+                                        self.user_settings.upgrade_pending_update_time,
+                                        self.user_settings.upgrade_last_update_time,
+                                        upgrade_msg)
+
 
             if dlg.exec_() == QDialog.Accepted:
                 self.user_settings.systray_visible = dlg.systray_visible
                 self.user_settings.systray_messages = dlg.systray_messages
-
+                self.user_settings.upgrade_notify = dlg.upgrade_notify
+        
+                log.debug("HPLIP update  notification = %d"%(self.user_settings.upgrade_notify))
                 self.user_settings.save()
 
                 if self.user_settings.systray_visible == SYSTRAY_VISIBLE_SHOW_ALWAYS:
@@ -542,11 +656,23 @@ class SystemTrayApp(QApplication):
                 break
 
             if r:
-                m = ''.join([m, os.read(self.read_pipe, self.fmt_size)])
+                #m = ''.join([m, os.read(self.read_pipe, self.fmt_size)])
+                m = os.read(self.read_pipe, self.fmt_size)
                 while len(m) >= self.fmt_size:
-                    event = device.Event(*struct.unpack(self.fmt, m[:self.fmt_size]))
+                    event = device.Event(*[x.rstrip(b'\x00').decode('utf-8') if isinstance(x, bytes) else x for x in struct.unpack(self.fmt, m[:self.fmt_size])])
+                    m = m[self.fmt_size:]                   
 
-                    m = m[self.fmt_size:]
+                    if event.event_code == EVENT_ERROR_NO_PROBED_DEVICES_FOUND:
+                        newmsg = "HPLIP cannot detect devices in your network. This may be due to existing firewall settings blocking the required ports like (5353/udp). When you are in a trusted network environment, you may open the ports for network services like mdns and slp in the firewall. For detailed steps follow the link.\n\n http://hplipopensource.com/node/375"
+                        FailureUI(None, newmsg, "")
+                        continue
+                    
+                    if event.event_code == EVENT_CUPS_QUEUES_REMOVED or event.event_code == EVENT_CUPS_QUEUES_ADDED:
+                        self.resetDevice()
+                        for d in device.getSupportedCUPSDevices(back_end_filter=['hp', 'hpfax']):
+                            self.addDevice(d)
+                            
+                        self.setMenu()
 
                     if event.event_code == EVENT_USER_CONFIGURATION_CHANGED:
                         log.debug("Re-reading configuration (EVENT_USER_CONFIGURATION_CHANGED)")
@@ -559,7 +685,7 @@ class SystemTrayApp(QApplication):
 
                     if self.user_settings.systray_visible in \
                         (SYSTRAY_VISIBLE_SHOW_ALWAYS, SYSTRAY_VISIBLE_HIDE_WHEN_INACTIVE):
-
+                        
                         log.debug("Showing...")
                         self.tray_icon.setVisible(True)
 
@@ -586,9 +712,12 @@ class SystemTrayApp(QApplication):
                         log.debug("Waiting to hide...")
                         QTimer.singleShot(HIDE_INACTIVE_DELAY, self.timeoutHideWhenInactive)
 
-                    if event.event_code <= EVENT_MAX_USER_EVENT:
-                        self.addDevice(event.device_uri)
-                        self.setMenu()
+                    if event.event_code <= EVENT_MAX_USER_EVENT or \
+                        event.event_code == EVENT_CUPS_QUEUES_REMOVED or event.event_code == EVENT_CUPS_QUEUES_ADDED:
+
+                        if event.event_code != EVENT_CUPS_QUEUES_REMOVED:
+                            self.addDevice(event.device_uri)
+                            self.setMenu()
 
                         if self.tray_icon.supportsMessages():
 
@@ -629,16 +758,16 @@ class SystemTrayApp(QApplication):
                                 self.model = models.normalizeModelUIName(model)
 
                                 if back_end == 'hp':
-                                    d = self.__tr("%1 Printer (%2)").arg(model).arg(idd)
+                                    d = self.__tr("%s Printer (%s)"%(model,idd))
 
                                 elif back_end == 'hpaio':
-                                    d = self.__tr("%1 Scanner (%2)").arg(model).arg(idd)
+                                    d = self.__tr("%s Scanner (%s)"%(model,idd))
 
                                 elif back_end == 'hpfax':
-                                    d = self.__tr("%1 Fax (%2)").arg(model).arg(idd)
+                                    d = self.__tr("%s Fax (%s)"%(model,idd))
 
                                 else:
-                                    d = self.__tr("%1 (%2)").arg(model).arg(idd)
+                                    d = self.__tr("%s (%s)"%(model,idd))
 
                             if show_message:
                                 if have_pynotify and pynotify.init("hplip"): # Use libnotify/pynotify
@@ -646,14 +775,16 @@ class SystemTrayApp(QApplication):
                                         (getPynotifyIcon('info'), pynotify.URGENCY_NORMAL))
 
                                     if event.job_id and event.title:
-                                        msg = "%s\n%s: %s\n(%s/%s)" % (unicode(d), desc, event.title, event.username, event.job_id)
+                                        msg = "%s\n%s: %s\n(%s/%s)" % (to_unicode(d), desc, event.title, event.username, event.job_id)
                                         log.debug("Notify: uri=%s desc=%s title=%s user=%s job_id=%d code=%d" %
                                                 (event.device_uri, desc, event.title, event.username, event.job_id, event.event_code))
                                     else:
-                                        msg = "%s\n%s (%s)" % (unicode(d), desc, event.event_code)
+                                        msg = "%s\n%s (%s)" % (to_unicode(d), desc, event.event_code)
                                         log.debug("Notify: uri=%s desc=%s code=%d" % (event.device_uri, desc, event.event_code))
 
                                     n = pynotify.Notification("HPLIP Device Status", msg, icon)
+                                    # CRID: 11833 Debian Traceback error notification exceeded
+                                    n.set_hint('transient', True)
                                     n.set_urgency(urgency)
 
                                     if error_state == ERROR_STATE_ERROR:
@@ -669,17 +800,13 @@ class SystemTrayApp(QApplication):
                                         log.debug("Bubble: uri=%s desc=%s title=%s user=%s job_id=%d code=%d" %
                                                 (event.device_uri, desc, event.title, event.username, event.job_id, event.event_code))
                                         self.tray_icon.showMessage(self.__tr("HPLIP Device Status"),
-                                            QString("%1\n%2: %3\n(%4/%5)").\
-                                            arg(d).\
-                                            arg(desc).arg(event.title).\
-                                            arg(event.username).arg(event.job_id),
+                                            QString("%s\n%s: %s\n(%s/%s)"%(d,desc, event.title,event.username,event.job_id)),
                                             icon, TRAY_MESSAGE_DELAY)
 
                                     else:
                                         log.debug("Bubble: uri=%s desc=%s code=%d" % (event.device_uri, desc, event.event_code))
                                         self.tray_icon.showMessage(self.__tr("HPLIP Device Status"),
-                                            QString("%1\n%2 (%3)").arg(d).\
-                                            arg(desc).arg(event.event_code),
+                                            QString("%s\n%s (%s)"%(d,desc,event.event_code)),
                                             icon, TRAY_MESSAGE_DELAY)
 
             else:
@@ -702,11 +829,17 @@ def run(read_pipe):
     log.set_module("hp-systray(qt4)")
     log.debug("PID=%d" % os.getpid())
 
-    app = SystemTrayApp(sys.argv, read_pipe)
+    try:
+        app = SystemTrayApp(sys.argv, read_pipe)
+    except dbus.DBusException as e:
+        # No session bus
+        log.debug("Caught exception: %s" % e)
+        sys.exit(1)
+
     app.setQuitOnLastWindowClosed(False) # If not set, settings dlg closes app
 
     i = 0
-    while i < 10:
+    while i < 60:
         if QSystemTrayIcon.isSystemTrayAvailable():
             break
         time.sleep(1.0)

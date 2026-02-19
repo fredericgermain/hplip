@@ -1,7 +1,7 @@
 /*****************************************************************************\
     hpijs.cpp : HP Inkjet Server
 
-    Copyright (c) 2001 - 2004, Hewlett-Packard Co.
+    Copyright (c) 2001 - 2004, HP Co.
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -53,6 +53,8 @@
 #endif
 #include "hpip.h"
 #include "hpijsfax.h"
+#include "utils.h"
+
 
 int hpijsfax_status_cb (void *status_cb_data, IjsServerCtx *ctx, IjsJobId job_id)
 {
@@ -269,13 +271,21 @@ int hpijsFaxServer (int argc, char **argv)
 	IP_XFORM_SPEC	xForm[3];
 	IP_IMAGE_TRAITS	traits;
 	IP_HANDLE		hJob;
+	 FILE *pFilePtrFax;
 
-	char					hpFileName[] = "/tmp/hplipfaxXXXXXX";
+	char					hpFileName[MAX_FILE_PATH_LEN]; 
 	int					fdFax = -1;
 	BYTE					szFileHeader[68];
 	BYTE					szPageHeader[64];
 	BYTE					*p;
 	unsigned	int			uiPageNum = 0;
+	char user_name[32]={0,};
+
+   if (argc > 2)
+        strncpy(user_name, argv[2], sizeof(user_name));
+
+    snprintf(hpFileName,sizeof(hpFileName),"%s/hp_%s_ijsfax_Log_XXXXXX",CUPS_TMP_DIR, user_name);
+
 
 	pFaxStruct = new HPIJSFax ();
 
@@ -313,7 +323,8 @@ int hpijsFaxServer (int argc, char **argv)
 		    pFaxStruct->SetFirstRaster (0);
 			if (fdFax == -1)
 			{
-				fdFax = mkstemp (hpFileName);
+//				fdFax = mkstemp (hpFileName);
+				fdFax = createTempFile(hpFileName, &pFilePtrFax);
 				if (fdFax < 0)
 				{
 					BUG ("Unable to open Fax output file - %s for writing\n", hpFileName);

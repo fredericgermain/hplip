@@ -6,7 +6,7 @@
   interface sits on top of the hpmud core interface. The system interface does 
   not use the hpmud memory map file system.
  
-  (c) 2004-2007 Copyright Hewlett-Packard Development Company, LP
+  (c) 2004-2007 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -44,7 +44,6 @@
 #include <net-snmp/net-snmp-config.h>
 #include <net-snmp/net-snmp-includes.h>
 #endif
-static const char *SnmpPort[] = { "","public.1","public.2","public.3" };
 #endif
 
 static int PmlOidToHex(const char *szoid, unsigned char *oid, int oidSize)
@@ -233,7 +232,7 @@ int __attribute__ ((visibility ("hidden"))) GetSnmp(const char *ip, int port, co
    session.version = SNMP_VERSION_1;
    session.community = (unsigned char *)SnmpPort[port];
    session.community_len = strlen((const char *)session.community);
-   session.retries = 2;
+   session.retries = 1;
    session.timeout = 1000000;         /* 1 second */
    ss = snmp_open(&session);                     /* establish the session */
    if (ss == NULL)
@@ -341,7 +340,7 @@ enum HPMUD_RESULT hpmud_set_pml(HPMUD_DEVICE device, HPMUD_CHANNEL channel, cons
       if ((psz = strstr(ds.uri, "port=")) != NULL)
          port = strtol(psz+5, &tail, 10);
       else
-         port = 1;
+         port = PORT_PUBLIC;
 
       SetSnmp(ip, port, snmp_oid, type, data, data_size, &status, &result);
       if (result != HPMUD_R_OK)
@@ -433,14 +432,19 @@ enum HPMUD_RESULT hpmud_get_pml(HPMUD_DEVICE device, HPMUD_CHANNEL channel, cons
       if ((psz = strstr(ds.uri, "port=")) != NULL)
          port = strtol(psz+5, &tail, 10);
       else
-         port = 1;
+         port = PORT_PUBLIC;
 
       dLen = GetSnmp(ip, port, snmp_oid, message, sizeof(message), &dt, &status, &result);
       if (result != HPMUD_R_OK)
       {
-         BUG("GetPml failed ret=%d\n", result);
-         stat = result;
-         goto bugout;       
+        //Try one more time with previous default community name string ("public.1" which was used for old HP printers)  
+        dLen = GetSnmp(ip, PORT_PUBLIC_1, snmp_oid, message, sizeof(message), &dt, &status, &result);
+        if (result != HPMUD_R_OK)
+        {
+            BUG("GetPml failed ret=%d\n", result);
+            stat = result;
+            goto bugout;
+        }
       }
       p = message;    
    }       
@@ -454,6 +458,7 @@ enum HPMUD_RESULT hpmud_get_pml(HPMUD_DEVICE device, HPMUD_CHANNEL channel, cons
       *p++ = PML_GET_REQUEST;
       *p++ = PML_DT_OBJECT_IDENTIFIER;
       *p++ = dLen;                          /* assume oid length is < 10 bits */
+ 
       memcpy(p, oid, dLen);
       result = hpmud_write_channel(device, channel, message, dLen+3, HPMUD_EXCEPTION_SEC_TIMEOUT, &len);
       if (result != HPMUD_R_OK)
@@ -503,7 +508,10 @@ enum HPMUD_RESULT hpmud_get_pml(HPMUD_DEVICE device, HPMUD_CHANNEL channel, cons
       dLen = ((*p & 0x3) << 8 | *(p+1));         /* read 10 bit len from 2 byte field */
       p += 2;                               /* eat type and length */
    }
-   
+
+   if (dLen > buf_size)
+        dLen = buf_size;
+
    memcpy(buf, p, dLen);
    *bytes_read = dLen; 
    *type = dt;

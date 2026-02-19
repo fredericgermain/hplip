@@ -2,7 +2,7 @@
 
   hpmud.h - public definitions for multi-point transport driver
 
-  (c) 2004-2008 Copyright Hewlett-Packard Development Company, LP
+  (c) 2004-2015 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,7 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+  Author: Naga Samrat Chowdary Narla, Yashwant Sahu, Sarbeswar Meher
 \*****************************************************************************/
 
 #ifndef _HPMUD_H
@@ -67,6 +68,13 @@ enum HPMUD_BUS_ID
    HPMUD_BUS_ALL
 };
 
+enum HPMUD_DEVICE_TYPE
+{
+   HPMUD_AIO=0,
+   HPMUD_PRINTER=1,
+   HPMUD_SCANNER=2,
+};
+
 enum HPMUD_SCANTYPE
 {
    HPMUD_SCANTYPE_NA = 0,
@@ -75,22 +83,19 @@ enum HPMUD_SCANTYPE
    HPMUD_SCANTYPE_SOAP = 3,    /* Wookie (ie:ljcm1017) */
    HPMUD_SCANTYPE_MARVELL = 4,     /* (ie: ljm1005) */
    HPMUD_SCANTYPE_SOAPHT = 5,   /* HorseThief (ie: ljm1522) */
-   HPMUD_SCANTYPE_SCL_DUPLEX = 6
+   HPMUD_SCANTYPE_SCL_DUPLEX = 6,
+   HPMUD_SCANTYPE_LEDM = 7,
+   HPMUD_SCANTYPE_MARVELL2 = 8,     /* (Tsunami lj 1212  and series) */
+   HPMUD_SCANTYPE_ESCL=9,
+   HPMUD_SCANTYPE_ORBLITE=10
 };
 
 enum HPMUD_SCANSRC
 {
    HPMUD_SCANSRC_NA = 0,
-   HPMUD_SCANSRC_ADF= 1,
-   HPMUD_SCANSRC_FLATBED = 2,
-   HPMUD_SCANSRC_BOTH = 3
-};
-
-enum HPMUD_SCANCOLOR
-{
-   HPMUD_SCANCOLOR_NA = 0,
-   HPMUD_SCANCOLOR_MONO = 1,
-   HPMUD_SCANCOLOR_COLOR = 2
+   HPMUD_SCANSRC_FLATBED = 0x1,
+   HPMUD_SCANSRC_ADF= 0x2,
+   HPMUD_SCANSRC_CAMERA = 0x4,
 };
 
 enum HPMUD_STATUSTYPE
@@ -118,6 +123,8 @@ enum HPMUD_PLUGIN_TYPE
    HPMUD_PLUGIN_TYPE_OPTIONAL = 2,
 };
 
+
+
 #define HPMUD_S_PRINT_CHANNEL "PRINT"
 #define HPMUD_S_PML_CHANNEL "HP-MESSAGE"
 #define HPMUD_S_SCAN_CHANNEL "HP-SCAN"
@@ -132,7 +139,12 @@ enum HPMUD_PLUGIN_TYPE
 #define HPMUD_S_DEVMGMT_CHANNEL "HP-DEVMGMT"
 #define HPMUD_S_MARVELL_SCAN_CHANNEL "HP-MARVELL-SCAN"
 #define HPMUD_S_MARVELL_FAX_CHANNEL "HP-MARVELL-FAX"
+#define HPMUD_S_LEDM_SCAN "HP-LEDM-SCAN"
 #define HPMUD_S_WIFI_CHANNEL "HP-WIFICONFIG"
+#define HPMUD_S_MARVELL_EWS_CHANNEL "HP-MARVELL-EWS"
+#define HPMUD_S_IPP_CHANNEL "HP-IPP"
+#define HPMUD_S_IPP_CHANNEL2 "HP-IPP2"
+#define HPMUD_S_ESCL_SCAN "HP-ESCL-SCAN"
 
 typedef int HPMUD_DEVICE;       /* usb, parallel or jetdirect */
 #define HPMUD_DEVICE_MAX 2      /* zero is not used */
@@ -141,7 +153,7 @@ typedef int HPMUD_CHANNEL;
 #define HPMUD_CHANNEL_MAX HPMUD_MAX_CHANNEL_ID
 
 #define HPMUD_LINE_SIZE 256     /* Length of a line. */
-#define HPMUD_BUFFER_SIZE 8192  /* General Read/Write buffer. */
+#define HPMUD_BUFFER_SIZE 16384  /* General Read/Write buffer. */
 
 struct hpmud_dstat
 {
@@ -156,13 +168,12 @@ struct hpmud_model_attributes
 {
    enum HPMUD_IO_MODE prt_mode;        /* print only (io_mode) */
    enum HPMUD_IO_MODE mfp_mode;        /* pml | scan | fax (io_mode) */
-   enum HPMUD_SCANTYPE scantype;       /* 0=none */
+   enum HPMUD_SCANTYPE scantype;       /* scan protocol i.e. SCL, PML, SOAP, MARVELL, LEDM */
    enum HPMUD_STATUSTYPE statustype;
    enum HPMUD_SUPPORT_TYPE support;
    enum HPMUD_PLUGIN_TYPE plugin;
    enum HPMUD_SUPPORT_TYPE reserved[5];
-   enum HPMUD_SCANSRC scansrc;
-   enum HPMUD_SCANCOLOR scancolor;
+   enum HPMUD_SCANSRC scansrc; /*Flatbed, ADF, Camera or combination of these*/
 };
 
 #ifdef __cplusplus
@@ -235,6 +246,21 @@ enum HPMUD_RESULT hpmud_get_device_status(HPMUD_DEVICE dd, unsigned int *status)
  *  return value - see enum definition
  */
 enum HPMUD_RESULT hpmud_probe_devices(enum HPMUD_BUS_ID bus, char *buf, int buf_size, int *cnt, int *bytes_read);
+
+/*
+ * hpmud_probe_printers - probe local buses for HP supported printers, call normally does not block
+ *
+ * inputs:
+ *  bus - see enum definiton
+ *  buf_size - size of read buffer
+ *
+ * outputs:
+ *  buf - zero terminated CUPS backend formatted data
+ *  cnt - number of HP devices found
+ *  bytes_read - number of bytes actually read
+ *  return value - see enum definition
+ */
+enum HPMUD_RESULT hpmud_probe_printers(enum HPMUD_BUS_ID bus, char *buf, int buf_size, int *cnt, int *bytes_read);
 
 /*
  * hpmud_channel_open - open specified channel, call will block
@@ -513,53 +539,6 @@ enum HPMUD_RESULT hpmud_make_net_uri(const char *ip, int port, char *uri, int ur
  */
 enum HPMUD_RESULT hpmud_make_par_uri(const char *dnode, char *uri, int uri_size, int *bytes_read);
 
-/*
- * hpmud_get_conf - get key value from hplip.conf
- *
- * This function is a stateless hpmud helper function.
- *
- * inputs:
- *  section - zero terminated string (ie: "[dirs]")
- *  key - zero terminated string (ie: "home")
- *  value_size - size of value buffer in bytes
- *
- * outputs:
- *  value - zero terminated string
- *  return value - see enum definition
- */
-enum HPMUD_RESULT hpmud_get_conf(const char *section, const char *key, char *value, int value_size);
-
-/*
- * hpmud_get_key_value - get key value from specified file
- *
- * This function is a stateless hpmud helper function.
- *
- * inputs:
- *  file - zero terminated file path
- *  section - zero terminated string (ie: "[dirs]")
- *  key - zero terminated string (ie: "home")
- *  value_size - size of value buffer in bytes
- *
- * outputs:
- *  value - zero terminated string
- *  return value - see enum definition
- */
-enum HPMUD_RESULT hpmud_get_key_value(const char *file, const char *section, const char *key, char *value, int value_size);
-
-/*
- * hpmud_mdns_lookup - lookup IP for MDNS host name
- *
- * This function is a stateless hpmud helper function.
- *
- * inputs:
- *  host_name - zero terminated string (ie: "npi7c8a3e")
- *  sec_timeout - in seconds
- *
- * outputs:
- *  ip - zero terminated string
- *  return value - see enum definition
- */
-enum HPMUD_RESULT hpmud_mdns_lookup(const char *host_name, int sec_timeout, char *ip);
 
 /*
  * hpmud_make_mdns_uri - make a network uri from host name
@@ -583,3 +562,25 @@ enum HPMUD_RESULT hpmud_make_mdns_uri(const char *host, int port, char *uri, int
 
 #endif // _HPMUD_H
 
+/*********************** For Python 2.X and 3.X support ***************************/
+
+
+#if PY_MAJOR_VERSION >= 3
+  #define MOD_ERROR_VAL NULL
+  #define MOD_SUCCESS_VAL(val) val
+  #define MOD_INIT(name) PyMODINIT_FUNC PyInit_##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          static struct PyModuleDef moduledef = { \
+            PyModuleDef_HEAD_INIT, name, doc, -1, methods, }; \
+          ob = PyModule_Create(&moduledef);
+  #define FORMAT_STRING "(iy#ii)"
+  #define FORMAT_STRING1 "(iy#)"
+#else
+  #define MOD_ERROR_VAL
+  #define MOD_SUCCESS_VAL(val)
+  #define MOD_INIT(name) void init##name(void)
+  #define MOD_DEF(ob, name, doc, methods) \
+          ob = Py_InitModule3(name, methods, doc);
+  #define FORMAT_STRING "(is#ii)"
+  #define FORMAT_STRING1 "(is#)"
+#endif

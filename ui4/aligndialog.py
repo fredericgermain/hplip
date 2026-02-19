@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,25 +16,26 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Authors: Don Welch
+# Authors: Don Welch, Naga Samrat Chowdary Narla,
 #
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils, maint, status
 #from prnt import cups
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from aligndialog_base import Ui_Dialog
+from .aligndialog_base import Ui_Dialog
 
 PAGE_START = 0
 PAGE_LOAD_PAPER = 1
@@ -98,6 +99,9 @@ class AlignDialog(QDialog, Ui_Dialog):
             ALIGN_TYPE_TEST : 0,
             ALIGN_TYPE_AIO : 3,
             ALIGN_TYPE_LIDIL_DJ_D1600: 0,
+            ALIGN_TYPE_LEDM: 0,
+            ALIGN_TYPE_LEDM_MANUAL: 0,
+            ALIGN_TYPE_LEDM_FF_CC_0: 0,
             }
 
         self.seq = { # (func|method, tuple of params|None)
@@ -147,6 +151,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                 (self.showLoadPaperPage, (lambda: True,)),
                                 (maint.alignType2Phase2, (lambda: self.dev, lambda: self.a, lambda: self.b,
                                                           lambda: self.c, lambda: self.d)),
+                                (self.closeAll, None),
                                 (self.close, None),
                               ],
 
@@ -167,6 +172,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                 (self.showPageEdgePage, None),
                                 (self.endPageEdgePage, None),
                                 (maint.alignType3Phase4, (lambda: self.dev, lambda: self.zca)),
+                                (self.closeAll, None),
                                 (self.close, None),
                              ],
 
@@ -203,6 +209,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                             (self.showAlignmentNumberPage, ('B', 'v', 'k', 2, 11)),
                             (self.endAlignmentNumberPage, ('B',)),
                             (self.setXBowValues, None),
+                            (self.closeAll, None),
                             (self.close, None),
                             ],
 
@@ -211,6 +218,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                             (self.showAlignmentNumberPage, ('B', 'v', 'k', 2, 11)),
                             (self.endAlignmentNumberPage, ('B',)),
                             (self.setXBowValues, None),
+                            (self.closeAll, None),
                             (self.close, None),
                             ],
 
@@ -219,6 +227,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                             (self.showAlignmentNumberPage, ('B', 'v', 'kc', 2, 11)),
                             (self.endAlignmentNumberPage, ('B',)),
                             (self.setXBowValues, None),
+                            (self.closeAll, None),
                             (self.close, None),
                             ],
 
@@ -233,6 +242,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                             (self.showAlignmentNumberPage, ('E', 'v', 'kc', 2, 11)),
                             (self.endAlignmentNumberPage, ('E',)),
                             (self.setXBowValues, None),
+                            (self.closeAll, None),
                             (self.close, None),
                             ],
 
@@ -259,6 +269,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                 (maint.alignType6Phase1, (lambda: self.dev,)),
                                 (self.setAlignButton, (BUTTON_FINISH,)),
                                 (self.showAioPage, None),
+                                (self.closeAll, None),
                                 (self.close, None),
                             ],
 
@@ -276,6 +287,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                 (self.endAlignmentNumberPage, ('D',)),
                                 (maint.alignType3Phase2, (lambda: self.dev, lambda: self.num_inks, lambda: self.a,
                                                           lambda: self.b, lambda: self.c, lambda: self.d)),
+                                (self.closeAll, None),
                                 (self.close, None),
                             ],
 
@@ -292,6 +304,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                 (self.endAlignmentNumberPage, ('D',)),
                                 (maint.alignType3Phase2, (lambda: self.dev, lambda: self.a, lambda: self.b,
                                                           lambda: self.c, lambda: self.d)),
+                                (self.closeAll, None),
                                 (self.close, None),
                             ],
 
@@ -306,6 +319,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                                (self.setAlignButton, (BUTTON_FINISH,)),
                                (self.showLoadPaperPage, (lambda: True,)),
                                (maint.alignType10Phase3, (lambda: self.dev,)),
+                               (self.closeAll, None),
                                (self.close, None),
                             ],
 
@@ -320,12 +334,14 @@ class AlignDialog(QDialog, Ui_Dialog):
                                (self.setAlignButton, (BUTTON_FINISH,)),
                                (self.showLoadPaperPage, (lambda: True,)),
                                (maint.alignType11Phase3, (lambda: self.dev,)),
+                               (self.closeAll, None),
                                (self.close, None),
                             ],
 
             ALIGN_TYPE_OJ_PRO : [ # 12
                                 (self.showLoadPaperPage, None),
                                 (maint.AlignType12, (lambda : self.dev, lambda: true)),
+                                (self.closeAll, None),
                                 (self.close, None),
                             ],
 
@@ -334,6 +350,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                               (maint.alignType13Phase1, (lambda: self.dev,)),
                               (self.setAlignButton, (BUTTON_FINISH,)),
                               (self.showAioPage, None),
+                              (self.closeAll, None),
                               (self.close, None),
                             ],
 
@@ -348,9 +365,51 @@ class AlignDialog(QDialog, Ui_Dialog):
                                (self.setAlignButton, (BUTTON_FINISH,)),
                                (self.showLoadPaperPage, (lambda: True,)),
                                (maint.alignType14Phase3, (lambda: self.dev,)),
+                               (self.closeAll, None),
                                (self.close, None),
                             ],
 
+            ALIGN_TYPE_LEDM : [ # 15
+                               (self.showLoadPaperPage, None),
+                               (maint.AlignType15Phase1, (lambda : self.dev, lambda: self.showAioPage)),
+                               (self.close, None),
+                            ],
+
+            ALIGN_TYPE_LEDM_MANUAL : [ # 16
+                               (self.showLoadPaperPage, None),
+                               (maint.AlignType15Phase1, (lambda : self.dev, lambda: true)),
+                               (self.showAlignmentNumberPage, ('A', 'v', 'kc', 3, 23)),
+                               (self.endAlignmentNumberPage, ('A',)),
+                               (self.showAlignmentNumberPage, ('B', 'h', 'kc', 3, 17)),
+                               (self.endAlignmentNumberPage, ('B',)),
+                               (self.showAlignmentNumberPage, ('C', 'v', 'k', 3, 23)),
+                               (self.endAlignmentNumberPage, ('C',)),
+                               (self.showAlignmentNumberPage, ('D', 'v', 'c', 3, 23)),
+                               (self.endAlignmentNumberPage, ('D',)),
+                               (self.showAlignmentNumberPage, ('E', 'h', 'k', 3, 11)),
+                               (self.endAlignmentNumberPage, ('E',)),
+                               (self.showAlignmentNumberPage, ('F', 'h', 'k', 3, 11)),
+                               (self.endAlignmentNumberPage, ('F',)),
+                               (self.showAlignmentNumberPage, ('G', 'h', 'k', 3, 11)),
+                               (self.endAlignmentNumberPage, ('G',)),
+                               (self.showAlignmentNumberPage, ('H', 'v', 'k', 3, 11)),
+                               (self.endAlignmentNumberPage, ('H',)),
+                               (self.showAlignmentNumberPage, ('I', 'v', 'c', 3, 19)),
+                               (self.endAlignmentNumberPage, ('I',)),
+                               (self.showAlignmentNumberPage, ('J', 'v', 'c', 3, 19)),
+                               (self.endAlignmentNumberPage, ('J',)),
+                               (maint.AlignType16Phase1, (lambda: self.dev, lambda: self.a, lambda: self.b,
+                                                          lambda: self.c, lambda: self.d, lambda: self.e,
+                                                          lambda: self.f, lambda: self.g, lambda: self.h,
+                                                          lambda: self.i, lambda: self.j)),
+                               (self.closeAll, None),
+                               (self.close, None),
+                            ],
+           ALIGN_TYPE_LEDM_FF_CC_0 : [ # 17
+                               (self.showLoadPaperPage, None),
+                               (maint.AlignType17Phase1, (lambda : self.dev, lambda: self.showAioPage)),
+                               (self.close, None),
+                            ],
             }
 
         self.setupUi(self)
@@ -366,7 +425,9 @@ class AlignDialog(QDialog, Ui_Dialog):
         #self.connect(self.BackButton, SIGNAL("clicked()"), self.BackButton_clicked)
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_noDevices"), self.DeviceUriComboBox_noDevices)
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_currentChanged"), self.DeviceUriComboBox_currentChanged)
-        self.DeviceComboBox.setFilter({'align-type': (operator.gt, 0)})
+        self.DeviceComboBox.setFilter({'align-type': (operator.ne, ALIGN_TYPE_NONE)})
+
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         # Application icon
         self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))
@@ -414,7 +475,7 @@ class AlignDialog(QDialog, Ui_Dialog):
                         t.append(p)
 
             try:
-                log.debug("%s(%s)" % (seq.func_name, ','.join([repr(x) for x in t])))
+                log.debug("%s(%s)" % (seq.__name__, ','.join([repr(x) for x in t])))
             except AttributeError:
                 pass
 
@@ -480,14 +541,15 @@ class AlignDialog(QDialog, Ui_Dialog):
         # colors: 'k' or 'c' or 'kc'
         # line_count: 2 or 3
         # choice_count: 5, 7, 9, 11, etc. (odd)
-        self.AlignmentNumberTitle.setText(self.__tr("Choose the set of lines in group %1 where the line segments are <b>best</b> aligned.").arg(line_id))
+        self.AlignmentNumberTitle.setText(self.__tr("From the printed Alignment page, Choose the set of lines in group %s where the line segments are <b>best</b> aligned." % line_id))
         self.AlignmentNumberIcon.setPixmap(load_pixmap('%s-%s-%d' % (orientation, colors, line_count), 'other'))
         self.AlignmentNumberComboBox.clear()
 
         for x in range(choice_count):
-            self.AlignmentNumberComboBox.addItem(QString("%1%2").arg(line_id).arg(x+1))
+            self.AlignmentNumberComboBox.addItem(QString("%s%s"% (line_id, x+1)))
 
         self.displayPage(PAGE_ALIGNMENT_NUMBER)
+        return
 
 
     def endAlignmentNumberPage(self, line_id):
@@ -509,6 +571,29 @@ class AlignDialog(QDialog, Ui_Dialog):
             self.d = v
             log.debug("D=%d" % v)
 
+        elif line_id == 'E':
+            self.e = v
+            log.debug("E=%d" % v)
+
+        elif line_id == 'F':
+            self.f = v
+            log.debug("F=%d" % v)
+
+        elif line_id == 'G':
+            self.g = v
+            log.debug("G=%d" % v)
+
+        elif line_id == 'H':
+            self.h = v
+            log.debug("H=%d" % v)
+
+        elif line_id == 'I':
+            self.i = v
+            log.debug("I=%d" % v)
+
+        elif line_id == 'J':
+            self.j = v
+            log.debug("J=%d" % v)
 
     def showPageEdgePage(self, prefix=None, count=13):
         self.PageEdgeTitle.setText(self.__tr("Choose the <b>numbered arrow</b> that <b>best </b>marks the edge of the paper."))
@@ -517,9 +602,9 @@ class AlignDialog(QDialog, Ui_Dialog):
         self.PageEdgeComboBox.clear()
         for x in range(count):
             if prefix is None:
-                self.PageEdgeComboBox.addItem(QString("%1").arg(x+1))
+                self.PageEdgeComboBox.addItem(QString("%s" % x+1))
             else:
-                self.PageEdgeComboBox.addItem(QString("%1%2").arg(prefix).arg(x+1)) # for xBow
+                self.PageEdgeComboBox.addItem(QString("%s%s" % (prefix, x+1))) # for xBow
 
         self.displayPage(PAGE_EDGE)
 
@@ -547,7 +632,7 @@ class AlignDialog(QDialog, Ui_Dialog):
             # TODO: ...
 
         self.controls = maint.align10and11and14Controls(pattern, self.align_type)
-        keys = self.controls.keys()
+        keys = list(self.controls.keys())
         keys.sort()
         max_line = 'A'
         for line in keys:
@@ -556,7 +641,7 @@ class AlignDialog(QDialog, Ui_Dialog):
             else:
                 break
 
-        self.LBowTitle.setText(self.__tr("For each row A - %1, select the label representing the box in which in the inner lines are the <b>least</b> visible.").arg(max_line))
+        self.LBowTitle.setText(self.__tr("For each row A - %s, select the label representing the box in which in the inner lines are the <b>least</b> visible." % max_line))
 
         for line in self.controls:
             if not self.controls[line][0]:
@@ -571,7 +656,7 @@ class AlignDialog(QDialog, Ui_Dialog):
 
     def endLBowPage(self):
         self.values = []
-        controls = self.controls.keys()
+        controls = list(self.controls.keys())
         controls.sort()
 
         for line in controls:
@@ -599,10 +684,10 @@ class AlignDialog(QDialog, Ui_Dialog):
     def showColorAdjustPage(self, line_id, count=21):
         self.ColorAdjustComboBox.clear()
         self.ColorAdjustIcon.setPixmap(load_pixmap('color_adj', 'other'))
-        self.ColorAdjustLabel.setText(self.__tr("Line %1:").arg(line_id))
+        self.ColorAdjustLabel.setText(self.__tr("Line %s:" % line_id))
 
         for x in range(count):
-            self.ColorAdjustComboBox.addItem(QString("%1%2").arg(line_id).arg(x+1))
+            self.ColorAdjustComboBox.addItem(QString("%s%s" % (line_id, x+1)))
 
         self.displayPage(PAGE_COLOR_ADJ)
 
@@ -682,7 +767,7 @@ class AlignDialog(QDialog, Ui_Dialog):
         if p is None or not self.step_max:
             self.StepText.setText(QString(""))
         else:
-            self.StepText.setText(self.__tr("Step %1 of %2").arg(p).arg(self.step_max))
+            self.StepText.setText(self.__tr("Step %s of %s" % (p, self.step_max)))
 
 
     def setAlignButton(self, typ=BUTTON_ALIGN):

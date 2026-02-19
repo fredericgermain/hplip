@@ -2,7 +2,7 @@
 
   pml.h - HP SANE backend for multi-function peripherals (libsane-hpaio)
 
-  (c) 2001-2005 Copyright Hewlett-Packard Development Company, LP
+  (c) 2001-2005 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -122,9 +122,13 @@ typedef struct PmlObject_s * PmlObject_t;
 #define PML_DATA_TYPE_GRAYSCALE   8
 #define PML_DATA_TYPE_COLOR   24
 
-#define PML_CONTRAST_MIN    0
-#define PML_CONTRAST_MAX    100
-#define PML_CONTRAST_DEFAULT    50
+#define PML_CONTRAST_MIN    -127
+#define PML_CONTRAST_MAX    127
+#define PML_CONTRAST_DEFAULT    0
+
+#define PML_BRIGHTNESS_MIN    -127
+#define PML_BRIGHTNESS_MAX    127
+#define PML_BRIGHTNESS_DEFAULT    0
 
 #define PML_COMPRESSION_NONE    1
 #define PML_COMPRESSION_DEFAULT   2

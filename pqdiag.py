@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -41,7 +41,7 @@ from prnt import cups
 
 try:
     mod = module.Module(__mod__, __title__, __version__, __doc__, None,
-                        (GUI_MODE,), (UI_TOOLKIT_QT4,))
+                        (GUI_MODE,), (UI_TOOLKIT_QT4, UI_TOOLKIT_QT5), False, False, True)
 
     mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS,
                  see_also_list=['hp-align', 'hp-clean', 'hp-colorcal',
@@ -52,6 +52,9 @@ try:
 
     device_uri = mod.getDeviceUri(device_uri, printer_name)
 
+    if not device_uri:
+        sys.exit(1)
+    log.info("Using device : %s\n" % device_uri)
     if not utils.canEnterGUIMode4():
         log.error("%s -u/--gui requires Qt4 GUI support. Exiting." % __mod__)
         sys.exit(1)
@@ -64,7 +67,6 @@ try:
         sys.exit(1)
 
     app = QApplication(sys.argv)
-
     dlg = PQDiagDialog(None, device_uri) # TODO: add device_uri
     dlg.show()
     try:

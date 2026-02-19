@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,10 +16,10 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Authors: Don Welch, Pete Parks
+# Authors: Don Welch, Pete Parks, Naga Samrat Chowdary Narla,
 #
 
-from __future__ import generators
+
 
 # Std Lib
 import sys
@@ -29,48 +29,51 @@ import gzip
 import select
 import struct
 import threading
-import Queue
+import signal
 
 # Local
+from base.sixext.moves import queue
 from base.g import *
-from base import device, utils, pml, maint, pkit
+from base import device, utils, pml, maint, pkit, os_utils
+from base.sixext import  to_unicode
 from prnt import cups
 from base.codes import *
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
+from installer.core_install import *
 
 # Qt
 from qt import *
 
 # Main form
-from devmgr4_base import DevMgr4_base
+from .devmgr4_base import DevMgr4_base
 
 # Scrollviews
-from scrollview import ScrollView
-from scrollprintsettings import ScrollPrintSettingsView
+from .scrollview import ScrollView
+from .scrollprintsettings import ScrollPrintSettingsView
 
 # Alignment and ColorCal forms
-from alignform import AlignForm
-from aligntype6form1 import AlignType6Form1
-from aligntype6form2 import AlignType6Form2
-from paperedgealignform import PaperEdgeAlignForm
-from colorcalform import ColorCalForm # Type 1 color cal
-from coloradjform import ColorAdjForm  # Type 5 and 6 color adj
-from colorcalform2 import ColorCalForm2 # Type 2 color cal
-from colorcal4form import ColorCal4Form # Type 4 color cal
-from align10form import Align10Form # Type 10 and 11 alignment
-from align13form import Align13Form # Type 13 alignment
+from .alignform import AlignForm
+from .aligntype6form1 import AlignType6Form1
+from .aligntype6form2 import AlignType6Form2
+from .paperedgealignform import PaperEdgeAlignForm
+from .colorcalform import ColorCalForm # Type 1 color cal
+from .coloradjform import ColorAdjForm  # Type 5 and 6 color adj
+from .colorcalform2 import ColorCalForm2 # Type 2 color cal
+from .colorcal4form import ColorCal4Form # Type 4 color cal
+from .align10form import Align10Form # Type 10 and 11 alignment
+from .align13form import Align13Form # Type 13 alignment
 
 # Misc forms
-from loadpaperform import LoadPaperForm
-from settingsdialog import SettingsDialog
-from aboutdlg import AboutDlg
-from cleaningform import CleaningForm
-from cleaningform2 import CleaningForm2
-from waitform import WaitForm
-from faxsettingsform import FaxSettingsForm
-from nodevicesform import NoDevicesForm
-from settingsdialog import SettingsDialog
-from aboutdlg import AboutDlg
+from .loadpaperform import LoadPaperForm
+from .settingsdialog import SettingsDialog
+from .aboutdlg import AboutDlg
+from .cleaningform import CleaningForm
+from .cleaningform2 import CleaningForm2
+from .waitform import WaitForm
+from .faxsettingsform import FaxSettingsForm
+from .nodevicesform import NoDevicesForm
+from .settingsdialog import SettingsDialog
+from .firmwaredialog import FirmwareDialog
 
 # all in seconds
 MIN_AUTO_REFRESH_RATE = 5
@@ -189,10 +192,10 @@ class PasswordDialog(QDialog):
         self.connect(self.okPushButton,SIGNAL("clicked()"),self.accept)
         self.connect(self.passwordLineEdit,SIGNAL("returnPressed()"),self.accept)
     def getUsername(self):
-        return unicode(self.usernameLineEdit.text())
+        return to_unicode(self.usernameLineEdit.text())
 
     def getPassword(self):
-        return unicode(self.passwordLineEdit.text())
+        return to_unicode(self.passwordLineEdit.text())
 
     def languageChange(self):
         self.setCaption(self.__tr("HP Device Manager - Enter Username/Password"))
@@ -367,7 +370,7 @@ class UpdateThread(QThread):
                 if dev.supported:
                     try:
                         dev.open()
-                    except Error, e:
+                    except Error as e:
                         log.warn(e.msg)
 
                     time.sleep(0.1)
@@ -378,13 +381,14 @@ class UpdateThread(QThread):
                         try:
                             dev.queryDevice()
 
-                        except Error, e:
+                        except Error as e:
                             log.error("Query device error (%s)." % e.msg)
                             dev.error_state = ERROR_STATE_ERROR
 
             finally:
                 dev.close()
                 #print "THREAD LOCK RELEASE"
+                cups.releaseCupsInstance()
                 devices_lock.release()
 
             log.debug("Device state = %d" % dev.device_state)
@@ -407,8 +411,18 @@ class DevMgr4(DevMgr4_base):
                  initial_device_uri=None, disable_dbus=False,
                  parent=None, name=None, fl = 0):
 
-        DevMgr4_base.__init__(self, parent, name, fl)
 
+        # Distro insformation
+        core =  CoreInstall(MODE_CHECK)
+#        core.init()
+        self.Is_autoInstaller_distro = core.is_auto_installer_support()
+        self.Latest_ver= user_conf.get('upgrade', 'latest_available_version')
+        installed_version=sys_conf.get('hplip','version')
+        if utils.Is_HPLIP_older_version(installed_version, self.Latest_ver):
+            DevMgr4_base.__init__(self, parent, name, fl,self.Latest_ver,self.Is_autoInstaller_distro)
+        else:
+            self.Latest_ver = ""
+            DevMgr4_base.__init__(self, parent, name, fl,self.Latest_ver,self.Is_autoInstaller_distro)
         log.debug("Initializing toolbox UI (Qt3)...")
         log.debug("HPLIP Version: %s" % prop.installed_version)
 
@@ -436,8 +450,8 @@ class DevMgr4(DevMgr4_base):
 
 
         # Update thread setup
-        self.request_queue = Queue.Queue()
-        self.response_queue = Queue.Queue()
+        self.request_queue = queue.Queue()
+        self.response_queue = queue.Queue()
         self.update_thread = UpdateThread(self.response_queue, self.request_queue)
         self.update_thread.start()
 
@@ -572,7 +586,7 @@ class DevMgr4(DevMgr4_base):
 
         # Resize the splitter so that the device list starts as a single column
         self.splitter2.setSizes([120, 700])
-
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
     def InitMisc(self):
@@ -599,13 +613,22 @@ class DevMgr4(DevMgr4_base):
               12 : self.__tr("twelve")
               }
 
-
-        self.TabIndex = { self.FunctionsTab: self.UpdateFuncsTab,
+        if self.Latest_ver is "":
+            self.TabIndex = { self.FunctionsTab: self.UpdateFuncsTab,
                 self.StatusTab: self.UpdateStatusTab,
                 self.SuppliesTab: self.UpdateSuppliesTab,
                 self.PrintSettingsTab: self.UpdatePrintSettingsTab,
                 self.PrintJobsTab: self.UpdatePrintControlTab,
                 }
+        else:
+            self.TabIndex = { self.FunctionsTab: self.UpdateFuncsTab,
+                self.StatusTab: self.UpdateStatusTab,
+                self.SuppliesTab: self.UpdateSuppliesTab,
+                self.PrintSettingsTab: self.UpdatePrintSettingsTab,
+                self.PrintJobsTab: self.UpdatePrintControlTab,
+                self.UpgradeTab:self.UpdateUpgradeTab,
+                }
+
 
 
     def InitialUpdate(self):
@@ -679,7 +702,7 @@ class DevMgr4(DevMgr4_base):
                                 self.UpdateHistory(dev)
                                 self.UpdateDevice(dev)
 
-                        elif event.event_code == EVENT_CUPS_QUEUES_CHANGED:
+                        elif event.event_code == EVENT_CUPS_QUEUES_REMOVED or event.event_code == EVENT_CUPS_QUEUES_ADDED:
                             pass
 
                         elif event.event_code == EVENT_RAISE_DEVICE_MANAGER: # 9001
@@ -896,8 +919,9 @@ class DevMgr4(DevMgr4_base):
                     devices[d] = dev
 
                 log.debug("Removals (2): %s" % ','.join(removals))
-
+                removed_device=None
                 for d in removals:
+                    removed_device = d
                     item = self.DeviceList.firstItem()
                     log.debug("removing: %s" % d)
 
@@ -919,6 +943,9 @@ class DevMgr4(DevMgr4_base):
                 self.DeviceList.adjustItems()
                 self.DeviceList.updateGeometry()
                 qApp.processEvents()
+                # sending Event to remove this device from hp-systray
+                if removed_device:
+                    utils.sendEvent(EVENT_CUPS_QUEUES_REMOVED,removed_device, "")
 
                 if len(devices):
                     for tab in self.TabIndex:
@@ -1012,7 +1039,13 @@ class DevMgr4(DevMgr4_base):
         if dev is self.cur_device and update_tab:
             self.UpdatePrinterCombos()
             self.TabIndex[self.Tabs.currentPage()]()
-
+            
+            if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
+                self.Tabs.changeTab(self.PrintSettingsTab,self.__tr("Print Settings"))
+                self.Tabs.changeTab(self.PrintJobsTab,self.__tr("Print Control"))
+            else:
+                self.Tabs.changeTab(self.PrintSettingsTab,self.__tr("Fax Settings"))
+                self.Tabs.changeTab(self.PrintJobsTab,self.__tr("Fax Control"))
         qApp.processEvents()
 
 
@@ -1151,15 +1184,15 @@ class DevMgr4(DevMgr4_base):
                 self.PrintSettingsPrinterCombo.insertItem(c.decode("utf-8"))
                 self.PrintJobPrinterCombo.insertItem(c.decode("utf-8"))
 
-            self.cur_printer = unicode(self.PrintSettingsPrinterCombo.currentText())
+            self.cur_printer = to_unicode(self.PrintSettingsPrinterCombo.currentText())
 
     def PrintSettingsPrinterCombo_activated(self, s):
-        self.cur_printer = unicode(s)
+        self.cur_printer = to_unicode(s)
         self.PrintJobPrinterCombo.setCurrentText(self.cur_printer.encode("latin1")) # TODO: ?
         return self.PrinterCombo_activated(self.cur_printer)
 
     def PrintJobPrinterCombo_activated(self, s):
-        self.cur_printer = unicode(s)
+        self.cur_printer = to_unicode(s)
         self.PrintSettingsPrinterCombo.setCurrentText(self.cur_printer.encode("latin1")) # TODO: ?
         return self.PrinterCombo_activated(self.cur_printer)
 
@@ -1194,7 +1227,7 @@ class DevMgr4(DevMgr4_base):
 
             hplip_conf = ConfigParser.ConfigParser()
             fp = open("/etc/hp/hplip.conf", "r")
-            hplip_conf.readfp(fp)
+            hplip_conf.read_file(fp)
             fp.close()
 
             try:
@@ -1301,7 +1334,7 @@ class DevMgr4(DevMgr4_base):
                 self.AlignPensButton_clicked),
 
                 (lambda: printer and d.clean_type,
-                self.__tr("Clean Cartridges"),
+                self.__tr("Clean Printheads"),
                 "clean",
                 self.__tr("You only need to perform this action if you are<br>having problems with poor printout quality due to clogged ink nozzles."),
                 self.CleanPensButton_clicked),
@@ -1336,7 +1369,7 @@ class DevMgr4(DevMgr4_base):
                 self.__tr("Download Firmware"),
                 "firmware",
                 self.__tr("Download firmware to your printer <br>(required on some devices after each power-up)."),
-                self.downloadFirmware),
+                self.ShowFirmwareDlg),
 
                 # PLUGIN
 
@@ -1374,7 +1407,7 @@ class DevMgr4(DevMgr4_base):
 
             for filter, text, icon, tooltip, cmd in self.ICONS:
                 if filter is not None:
-                    if not filter():
+                    if not list(filter()):
                         continue
 
                 FuncViewItem(self.iconList, text,
@@ -1583,8 +1616,14 @@ class DevMgr4(DevMgr4_base):
         self.FailureUI(self.__tr("<b>Device is busy or in an error state.</b><p>Please check device and try again."))
 
 
-    def LoadPaperUI(self):
-        if LoadPaperForm(self).exec_loop() == QDialog.Accepted:
+    def LoadPaperUI(self, msg="", title=""):
+        LPFObj = LoadPaperForm(self)
+        if title:
+            LPFObj.setCaption(title)
+        if msg:
+            LPFObj.textLabel7.setText(msg)
+
+        if LPFObj.exec_loop() == QDialog.Accepted:
             return True
         return False
 
@@ -1696,6 +1735,18 @@ class DevMgr4(DevMgr4_base):
                     elif align_type == ALIGN_TYPE_AIO:
                         maint.AlignType13(d, self.LoadPaperUI, self.Align13UI)
 
+                    elif align_type == ALIGN_TYPE_LEDM:
+                        maint.AlignType15(d, self.LoadPaperUI, self.Align13UI)
+
+                    elif align_type == ALIGN_TYPE_LEDM_MANUAL:
+                        maint.AlignType16(d, self.LoadPaperUI, self.AlignmentNumberUI)
+
+                    elif align_type == ALIGN_TYPE_LEDM_FF_CC_0:
+                        maint.AlignType17(d, self.LoadPaperUI, self.Align13UI)
+
+                    elif align_type == ALIGN_TYPE_UNSUPPORTED:
+                        self.WarningUI(self.__tr("<p><b>Alignment through HPLIP not supported for this printer. Please use the printer's front panel to perform cartridge alignment.</b>"))
+
                 else:
                     self.CheckDeviceUI()
 
@@ -1791,15 +1842,21 @@ class DevMgr4(DevMgr4_base):
         dlg.exec_loop()
 
 
-    def CleanUI1(self):
-        return CleaningForm(self, self.cur_device, 1).exec_loop() == QDialog.Accepted
+    def CleanUI1(self, msg=""):
+        CFObj = CleaningForm(self, self.cur_device, 1)
+        if msg:
+            CFObj.CleaningText.setText(msg)
+        return CFObj.exec_loop() == QDialog.Accepted
 
 
-    def CleanUI2(self):
-        return CleaningForm(self, self.cur_device, 2).exec_loop() == QDialog.Accepted
+    def CleanUI2(self, msg=""):
+        CFObj = CleaningForm(self, self.cur_device, 2)
+        if msg:
+            CFObj.CleaningText.setText(msg)
+        return CFObj.exec_loop() == QDialog.Accepted
 
 
-    def CleanUI3(self):
+    def CleanUI3(self, msg=""):
         CleaningForm2(self).exec_loop()
         return True
 
@@ -1841,6 +1898,16 @@ class DevMgr4(DevMgr4_base):
                             maint.wipeAndSpitType1, self.LoadPaperUI,
                             self.CleanUI1, self.CleanUI2, self.CleanUI3,
                             self.WaitUI)
+
+                    elif clean_type == CLEAN_TYPE_LEDM:
+                        maint.cleaning(d, clean_type, maint.cleanTypeLedm, maint.cleanTypeLedm1,
+                            maint.cleanTypeLedm2, self.LoadPaperUI,
+                            self.CleanUI1, self.CleanUI2, self.CleanUI3,
+                            self.WaitUI, maint.isCleanTypeLedmWithPrint)
+
+                    elif clean_type == CLEAN_TYPE_UNSUPPORTED:
+                        self.WarningUI(self.__tr("<p><b>Cleaning through HPLIP not supported for this printer. Please use the printer's front panel to perform cartridge cleaning.</b>"))
+
                 else:
                     self.CheckDeviceUI()
 
@@ -1893,6 +1960,10 @@ class DevMgr4(DevMgr4_base):
         self.RunCommand(self.cmd_fab)
 
 
+    def ShowFirmwareDlg(self):
+        dlg = FirmwareDialog(self, self.cur_device_uri)
+        dlg.show()
+        return dlg.exec_loop() == QDialog.Accepted
 
     # ***********************************************************************************
     #
@@ -1992,9 +2063,9 @@ class DevMgr4(DevMgr4_base):
                 tt = QString("%1 %2").arg(dt.toString()).arg(desc)
 
                 if e.job_id:
-                    job_id = unicode(e.job_id)
+                    job_id = to_unicode(e.job_id)
                 else:
-                    job_id = u''
+                    job_id = ''
 
                 error_state = STATUS_TO_ERROR_STATE_MAP.get(e.event_code, ERROR_STATE_CLEAR)
                 tech_type = self.cur_device.tech_type
@@ -2007,8 +2078,8 @@ class DevMgr4(DevMgr4_base):
                 except KeyError:
                     status_pix = self.STATUS_ICONS[ERROR_STATE_CLEAR][0]
 
-                StatusListViewItem(self.statusListView, status_pix, ess, tt, unicode(e.event_code),
-                    job_id, unicode(e.username))
+                StatusListViewItem(self.statusListView, status_pix, ess, tt, to_unicode(e.event_code),
+                    job_id, to_unicode(e.username))
 
                 row -= 1
 
@@ -2052,7 +2123,7 @@ class DevMgr4(DevMgr4_base):
         try:
             i18n_amount = self.num_repr[amount]
         except KeyError:
-            i18n_amount = unicode(amount)
+            i18n_amount = to_unicode(amount)
 
         if amount == 1:
             i18n_unit = self.unit_names[unit_name][0]
@@ -2081,15 +2152,20 @@ class DevMgr4(DevMgr4_base):
         light_magenta = "#ffccff"
         black = "#000000"
         blue = "#0000ff"
-        dark_grey = "#808080"
-        light_grey = "#c0c0c0"
+        gray = "#808080"
+        dark_gray = "#a9a9a9"
+        light_gray = "#c0c0c0"
+        red = "#ff0000"
 
         self.TYPE_TO_PIX_MAP = {
                                AGENT_TYPE_UNSPECIFIED : [black],
                                AGENT_TYPE_BLACK: [black],
+                               AGENT_TYPE_MATTE_BLACK : [black],
+                               AGENT_TYPE_PHOTO_BLACK : [dark_gray],
+                               AGENT_TYPE_BLACK_B8800: [black],
                                AGENT_TYPE_CMY: [cyan, magenta, yellow],
                                AGENT_TYPE_KCM: [light_cyan, light_magenta, light_yellow],
-                               AGENT_TYPE_GGK: [dark_grey],
+                               AGENT_TYPE_GGK: [dark_gray],
                                AGENT_TYPE_YELLOW: [yellow],
                                AGENT_TYPE_MAGENTA: [magenta],
                                AGENT_TYPE_CYAN : [cyan],
@@ -2101,12 +2177,15 @@ class DevMgr4(DevMgr4_base):
                                AGENT_TYPE_LC_LM: [light_cyan, light_magenta],
                                #AGENT_TYPE_Y_M: [yellow, magenta],
                                #AGENT_TYPE_C_K: [black, cyan],
-                               AGENT_TYPE_LG_PK: [light_grey, dark_grey],
-                               AGENT_TYPE_LG: [light_grey],
-                               AGENT_TYPE_G: [dark_grey],
-                               AGENT_TYPE_PG: [light_grey],
+                               AGENT_TYPE_LG_PK: [light_gray, dark_gray],
+                               AGENT_TYPE_LG: [light_gray],
+                               AGENT_TYPE_G: [gray],
+                               AGENT_TYPE_DG: [dark_gray],
+                               AGENT_TYPE_PG: [light_gray],
                                AGENT_TYPE_C_M: [cyan, magenta],
                                AGENT_TYPE_K_Y: [black, yellow],
+                               AGENT_TYPE_LC: [light_cyan],
+                               AGENT_TYPE_RED : [red],
                                }
 
         self.suppliesList.setSorting(-1)
@@ -2406,9 +2485,11 @@ class DevMgr4(DevMgr4_base):
 
         if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
             self.printerTextLabel.setText(self.__tr("Printer Name:"))
+            self.groupBox1.setTitle(self.__tr("Printer Queue Control"))
 
         else:
             self.printerTextLabel.setText(self.__tr("Fax Name:"))
+            self.groupBox1.setTitle(self.__tr("Fax Queue Control"))
 
         self.jobList.clear()
         self.UpdatePrintController()
@@ -2416,13 +2497,13 @@ class DevMgr4(DevMgr4_base):
         jobs = cups.getJobs()
         num_jobs = 0
         for j in jobs:
-            if j.dest.decode('utf-8') == unicode(self.cur_printer):
+            if j.dest.decode('utf-8') == to_unicode(self.cur_printer):
                 num_jobs += 1
 
         for j in jobs:
             if j.dest == self.cur_printer:
                 JobListViewItem(self.jobList, self.JOB_STATE_ICONS[j.state],
-                    j.title, self.JOB_STATES[j.state], unicode(j.id))
+                    j.title, self.JOB_STATES[j.state], to_unicode(j.id))
 
         i = self.jobList.firstChild()
         if i is not None:
@@ -2484,7 +2565,7 @@ class DevMgr4(DevMgr4_base):
             if text:
                 dlg = JobInfoDialog(text, self)
                 dlg.setCaption(self.__tr("HP Device Manager - Job Log - %1 - Job %2").\
-                    arg(self.cur_printer).arg(unicode(item.job_id)))
+                    arg(self.cur_printer).arg(to_unicode(item.job_id)))
 
                 dlg.exec_loop()
 
@@ -2495,7 +2576,13 @@ class DevMgr4(DevMgr4_base):
     def UpdatePrintController(self):
         # default printer
         self.defaultPushButton.setText(self.__tr("Set as Default"))
+        
+        if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
+            device_string = "Printer"
+        else:
+            device_string = "Fax"
 
+        
         default_printer = cups.getDefaultPrinter()
         if default_printer is not None:
             default_printer = default_printer.decode('utf8')
@@ -2508,11 +2595,8 @@ class DevMgr4(DevMgr4_base):
             s = self.__tr("NOT SET AS DEFAULT")
             self.defaultPushButton.setEnabled(True)
 
-        if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-            QToolTip.add(self.defaultPushButton, self.__tr("The printer is currently: %1").arg(s))
+        QToolTip.add(self.defaultPushButton, self.__tr("The %2 is currently: %1").arg(s,device_string))
 
-        else:
-            QToolTip.add(self.defaultPushButton, self.__tr("The fax is currently: %1").arg(s))
 
         self.printer_state = cups.IPP_PRINTER_STATE_IDLE
 
@@ -2527,35 +2611,17 @@ class DevMgr4(DevMgr4_base):
         # start/stop
         if self.printer_state == cups.IPP_PRINTER_STATE_IDLE:
             s = self.__tr("IDLE")
-
-            if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-                self.stopstartPushButton.setText(self.__tr("Stop Printer"))
-
-            else:
-                self.stopstartPushButton.setText(self.__tr("Stop Fax"))
+            self.stopstartPushButton.setText(self.__tr("Stop %s"%device_string))
 
         elif self.printer_state == cups.IPP_PRINTER_STATE_PROCESSING:
             s = self.__tr("PROCESSING")
+            self.stopstartPushButton.setText(self.__tr("Stop %s"%device_string))
 
-            if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-                self.stopstartPushButton.setText(self.__tr("Stop Printer"))
-
-            else:
-                self.stopstartPushButton.setText(self.__tr("Stop Fax"))
         else:
             s = self.__tr("STOPPED")
+            self.stopstartPushButton.setText(self.__tr("Start %s"%device_string))
 
-            if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-                self.stopstartPushButton.setText(self.__tr("Start Printer"))
-
-            else:
-                self.stopstartPushButton.setText(self.__tr("Start Fax"))
-
-        if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-            QToolTip.add(self.stopstartPushButton, self.__tr("The printer is currently: %1").arg(s))
-
-        else:
-            QToolTip.add(self.stopstartPushButton, self.__tr("The fax is currently: %1").arg(s))
+        QToolTip.add(self.stopstartPushButton, self.__tr("The %2 is currently: %1").arg(s,device_string))
 
         # reject/accept
         if self.printer_accepting:
@@ -2566,38 +2632,37 @@ class DevMgr4(DevMgr4_base):
             s = self.__tr("REJECTING JOBS")
             self.rejectacceptPushButton.setText(self.__tr("Accept Jobs"))
 
-        if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
-            QToolTip.add(self.rejectacceptPushButton, self.__tr("The printer is currently: %1").arg(s))
+        QToolTip.add(self.rejectacceptPushButton, self.__tr("The %2 is currently: %1").arg(s,device_string))
 
-        else:
-            QToolTip.add(self.rejectacceptPushButton, self.__tr("The fax is currently: %1").arg(s))
 
 
     def stopstartPushButton_clicked(self):
         QApplication.setOverrideCursor(QApplication.waitCursor)
         try:
             if self.printer_state in (cups.IPP_PRINTER_STATE_IDLE, cups.IPP_PRINTER_STATE_PROCESSING):
-                result = cups.stop(self.cur_printer)
-                if result:
+
+                result, result_str = cups.cups_operation(cups.stop, GUI_MODE, 'qt3', self, self.cur_printer)
+                if result == cups.IPP_OK:
                     if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
                         e = EVENT_PRINTER_QUEUE_STOPPED
                     else:
                         e = EVENT_FAX_QUEUE_STOPPED
 
             else:
-                result = cups.start(self.cur_printer)
-                if result:
+                result, result_str = cups.cups_operation(cups.start, GUI_MODE, 'qt3', self, self.cur_printer)
+                if result == cups.IPP_OK:
                     if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
                         e = EVENT_PRINTER_QUEUE_STARTED
                     else:
                         e = EVENT_FAX_QUEUE_STARTED
 
-            if result:
+            if result == cups.IPP_OK:
                 self.UpdatePrintController()
                 self.cur_device.sendEvent(e, self.cur_printer)
             else:
                 log.error("Start/Stop printer operation failed")
-                self.FailureUI(self.__tr("<b>Start/Stop printer operation failed.</b><p>Try after add user to \"lp\" group."))
+                self.FailureUI(self.__tr("<b>Start/Stop printer operation failed.</b><p> Error : %s"%result_str))
+                cups.releaseCupsInstance()
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2607,27 +2672,28 @@ class DevMgr4(DevMgr4_base):
         QApplication.setOverrideCursor(QApplication.waitCursor)
         try:
             if self.printer_accepting:
-                result = cups.reject(self.cur_printer)
-                if result:
+                result ,result_str = cups.cups_operation(cups.reject, GUI_MODE, 'qt3', self, self.cur_printer)
+                if result == cups.IPP_OK:
                     if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
                         e = EVENT_PRINTER_QUEUE_REJECTING_JOBS
                     else:
                         e = EVENT_FAX_QUEUE_REJECTING_JOBS
 
             else:
-                result = cups.accept(self.cur_printer)
-                if result:
+                result ,result_str = cups.cups_operation(cups.accept, GUI_MODE, 'qt3', self, self.cur_printer)
+                if result == cups.IPP_OK:
                     if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
                         e = EVENT_PRINTER_QUEUE_ACCEPTING_JOBS
                     else:
                         e = EVENT_FAX_QUEUE_ACCEPTING_JOBS
 
-            if result:
+            if result == cups.IPP_OK:
                 self.UpdatePrintController()
                 self.cur_device.sendEvent(e, self.cur_printer)
             else:
                 log.error("Reject/Accept jobs operation failed")
-                self.FailureUI(self.__tr("<b>Accept/Reject printer operation failed.</b><p>Try after add user to \"lp\" group."))
+                self.FailureUI(self.__tr("<b>Accept/Reject printer operation failed.</b><p>Error : %s"%result_str))
+                cups.releaseCupsInstance()
 
         finally:
             QApplication.restoreOverrideCursor()
@@ -2636,10 +2702,12 @@ class DevMgr4(DevMgr4_base):
     def defaultPushButton_clicked(self):
         QApplication.setOverrideCursor(QApplication.waitCursor)
         try:
-            result = cups.setDefaultPrinter(self.cur_printer.encode('utf8'))
-            if not result:
+            result, result_str = cups.cups_operation(cups.setDefaultPrinter.encode('utf8'), GUI_MODE, 'qt3', self, self.cur_printer.encode('utf8'))
+
+            if result != cups.IPP_OK:
                 log.error("Set default printer failed.")
-                self.FailureUI(self.__tr("<b>Set default printer operation failed.</b><p>Try after add user to \"lp\" group."))
+                self.FailureUI(self.__tr("<b>Set default printer operation failed.</b><p>Error : %s"%result_str))
+                cups.releaseCupsInstance()
             else:
                 self.UpdatePrintController()
                 if self.cur_device.device_type == DEVICE_TYPE_PRINTER:
@@ -2668,8 +2736,30 @@ class DevMgr4(DevMgr4_base):
 
         self.UpdatePrintControlTab()
 
+    def UpdateUpgradeTab(self):
+        log.debug("Upgrade Tab is pressed")
+        self.InstallPushButton_lock = False
 
+    def InstallPushButton_clicked(self):
+        if self.InstallPushButton_lock is True:
+            return
 
+        if self.Is_autoInstaller_distro:
+            self.InstallPushButton.setEnabled(False)
+            terminal_cmd = utils.get_terminal()
+            if terminal_cmd is not None and utils.which("hp-upgrade"):
+                cmd = terminal_cmd + " 'hp-upgrade -w'"
+                os_utils.execute(cmd)
+            else:
+                log.error("Failed to run hp-upgrade command from terminal =%s "%terminal_cmd)
+            self.InstallPushButton.setEnabled(True)
+        else:
+            self.InstallPushButton_lock = True
+            utils.openURL("https://developers.hp.com/hp-linux-imaging-and-printing/install/manual/index.html")
+            QTimer.singleShot(1000, self.InstallPushButton_unlock)
+
+    def InstallPushButton_unlock(self):
+        self.InstallPushButton_lock = False
 
     # ***********************************************************************************
     #
@@ -2755,7 +2845,7 @@ class DevMgr4(DevMgr4_base):
             cmd = 'python ./setup.py --gui'
 
         log.debug(cmd)
-        utils.run(cmd, log_output=True, password_func=None, timeout=1)
+        utils.run(cmd)
         self.RescanDevices()
 
 
@@ -2781,9 +2871,12 @@ class DevMgr4(DevMgr4_base):
                     if d in (print_uri, fax_uri):
                         for p in self.cups_devices[d]:
                             log.debug("Removing %s" % p)
-                            r = cups.delPrinter(p)
-                            if r == 0:
-                                self.FailureUI(self.__tr("<p><b>Delete printer queue fails.</b><p>Try after add user to \"lp\" group."))
+                            r, result_str = cups.cups_operation(cups.delPrinter, GUI_MODE, 'qt3', self, p)
+
+                            if r != cups.IPP_OK:
+                                self.FailureUI(self.__tr("<p><b>Delete printer queue fails.</b><p>Error : %s"%result_str))
+                                print_uri =""   # Ignoring further devices delete operation, as authentication is failed or cancelled.
+                                fax_uri = ""
 
                 self.cur_device = None
                 self.cur_device_uri = ''
@@ -2913,16 +3006,16 @@ class ScrollDeviceInfoView(ScrollView):
 
         layout37.addMultiCellWidget(self.infoListView,1,1,0,3)
 
-        mq_keys = self.cur_device.mq.keys()
+        mq_keys = list(self.cur_device.mq.keys())
         mq_keys.sort()
         mq_keys.reverse()
-        for key,i in zip(mq_keys, range(len(mq_keys))):
+        for key,i in zip(mq_keys, list(range(len(mq_keys)))):
             QListViewItem(self.infoListView, self.__tr("Static"), key, str(self.cur_device.mq[key]))
 
-        dq_keys = self.cur_device.dq.keys()
+        dq_keys = list(self.cur_device.dq.keys())
         dq_keys.sort()
         dq_keys.reverse()
-        for key,i in zip(dq_keys, range(len(dq_keys))):
+        for key,i in zip(dq_keys, list(range(len(dq_keys)))):
             QListViewItem(self.infoListView, self.__tr("Dynamic"), key, str(self.cur_device.dq[key]))
 
         self.addWidget(widget, "file_list", maximize=True)

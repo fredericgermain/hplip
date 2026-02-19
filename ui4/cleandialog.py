@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,20 +21,21 @@
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils, maint
 from prnt import cups
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from cleandialog_base import Ui_Dialog
+from .cleandialog_base import Ui_Dialog
 
 
 CLEAN_TYPE_INITIAL = 1000
@@ -49,6 +50,8 @@ PAGE_FRONT_PANEL = 4
 BUTTON_CLEAN = 0
 BUTTON_NEXT = 1
 BUTTON_FINISH = 2
+
+LEDM_CLEAN_VERIFY_PAGE_JOB=b"<ipdyn:JobType>cleaningVerificationPage</ipdyn:JobType>"
 
 
 #d = None
@@ -73,6 +76,7 @@ class CleanDialog(QDialog, Ui_Dialog):
                       CLEAN_TYPE_PCL : 4,
                       CLEAN_TYPE_LIDIL : 4,
                       CLEAN_TYPE_PCL_WITH_PRINTOUT : 4,
+                      CLEAN_TYPE_LEDM : 4,
                     }
 
         self.seq = { # (func|method, tuple of params|None)
@@ -126,6 +130,20 @@ class CleanDialog(QDialog, Ui_Dialog):
                             # TODO: Add print-out
                             (self.close, None),
                             ],
+
+                    CLEAN_TYPE_LEDM : [ # 4
+                            (self.showLevel1Page, None),
+                            (self.endLevel1Page, None),
+                            (self.doClean, (1,)),
+                            (self.showLevel2Page, None),
+                            (self.endLevel2Page, None),
+                            (self.doClean, (2,)),
+                            (self.showLevel3Page, None),
+                            (self.endLevel3Page, None),
+                            (self.doClean, (3,)),
+                            # TODO: Add print-out
+                            (self.close, None),
+                            ],
                     }
 
 
@@ -139,7 +157,9 @@ class CleanDialog(QDialog, Ui_Dialog):
         self.connect(self.NextButton, SIGNAL("clicked()"), self.NextButton_clicked)
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_noDevices"), self.DeviceUriComboBox_noDevices)
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_currentChanged"), self.DeviceUriComboBox_currentChanged)
-        self.DeviceComboBox.setFilter({'clean-type': (operator.gt, 0)})
+        self.DeviceComboBox.setFilter({'clean-type': (operator.ne, CLEAN_TYPE_NONE)})
+
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         if self.device_uri:
             self.DeviceComboBox.setInitialDevice(self.device_uri)
@@ -174,7 +194,7 @@ class CleanDialog(QDialog, Ui_Dialog):
                         t.append(p)
 
             try:
-                log.debug("%s(%s)" % (seq.func_name, ','.join([repr(x) for x in t])))
+                log.debug("%s(%s)" % (seq.__name__, ','.join([repr(x) for x in t])))
             except AttributeError:
                 pass
 
@@ -259,7 +279,7 @@ class CleanDialog(QDialog, Ui_Dialog):
 
 
     def DeviceUriComboBox_noDevices(self):
-        FailureUI(self, self.__tr("<b>No devices that support print cartridge cleaning found.</b><p>Click <i>OK</i> to exit.</p>"))
+        FailureUI(self, self.__tr("<b>No devices that support printhead cleaning found.</b><p>Click <i>OK</i> to exit.</p>"))
         self.close()
 
 
@@ -280,25 +300,51 @@ class CleanDialog(QDialog, Ui_Dialog):
 
                         if level == 1:
                             maint.cleanType1(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
                         elif level == 2:
                             maint.primeType1(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
                         else: # 3
                             maint.wipeAndSpitType1(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
 
                     elif self.clean_type == CLEAN_TYPE_LIDIL: # 2
                         if level == 1:
                             maint.cleanType2(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
                         elif level == 2:
                             maint.primeType2(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
                         else: # 3
                             maint.wipeAndSpitType2(self.dev)
+                            maint.print_clean_test_page(self.dev)
 
-                    maint.print_clean_test_page(self.dev)
+                    elif self.clean_type == CLEAN_TYPE_LEDM: # 4
+                        IPCap_data = maint.getCleanLedmCapacity(self.dev)
+                        print_verification_page = True
+                        if LEDM_CLEAN_VERIFY_PAGE_JOB not in IPCap_data:
+                            print_verification_page = False
+
+                        if level == 1:
+                            maint.cleanTypeLedm(self.dev)
+                            maint.cleanTypeVerify(self.dev,level, print_verification_page)
+                            if print_verification_page is False:
+                                self.setCustomMessage(self.Prompt_5,"Cleaning level 1 is Completed. \nPress \"Cancel\" to Finish. Press \"Clean\" for next level clean")
+
+                        elif level == 2:
+                            maint.cleanTypeLedm1(self.dev)
+                            maint.cleanTypeVerify(self.dev,level, print_verification_page)
+                            if print_verification_page is False:
+                                self.setCustomMessage(self.Prompt_6,"Cleaning level 2 is Completed. \nPress \"Cancel\" to Finish. Press \"Clean\" for next level clean")
+
+                        else: # 3
+                            maint.cleanTypeLedm2(self.dev)
+                            maint.cleanTypeVerify(self.dev,level, print_verification_page)
 
                 else:
                     CheckDeviceUI(self)
@@ -328,7 +374,7 @@ class CleanDialog(QDialog, Ui_Dialog):
         if p is None or not self.step_max:
             self.StepText.setText(QString(""))
         else:
-            self.StepText.setText(self.__tr("Step %1 of %2").arg(p).arg(self.step_max))
+            self.StepText.setText(self.__tr("Step %s of %s" % (p, self.step_max)))
 
 
     def setCleanButton(self, typ=BUTTON_CLEAN):
@@ -339,6 +385,9 @@ class CleanDialog(QDialog, Ui_Dialog):
         elif typ == BUTTON_FINISH:
             self.NextButton.setText(self.__tr("Finish"))
 
+
+    def setCustomMessage(self, button, message):
+        button.setText(self.__tr(message))
 
     def __tr(self,s,c = None):
         return qApp.translate("CleanDialog",s,c)

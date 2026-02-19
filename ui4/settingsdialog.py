@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,12 +22,13 @@
 # Local
 from base.g import *
 from base.codes import *
-from ui_utils import *
+from base.sixext import  to_unicode
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
-from settingsdialog_base import Ui_SettingsDialog_base
+from .settingsdialog_base import Ui_SettingsDialog_base
 
 
 
@@ -40,12 +41,22 @@ class SettingsDialog(QDialog, Ui_SettingsDialog_base):
 
         self.user_settings = UserSettings()
         self.user_settings.load()
-
+        
+        cur_vers = sys_conf.get('hplip', 'version')
+        last_ver = user_conf.get('upgrade','latest_available_version')
+        if utils.Is_HPLIP_older_version(cur_vers, last_ver):
+            upgrade_msg ="Currently HPLIP-%s version is installed.\nLatest HPLIP-%s version is available for installation"%(cur_vers, last_ver)
+        else:
+            upgrade_msg ="HPLIP-%s version is installed"%(cur_vers)
+            
         self.SystemTraySettings.initUi(self.user_settings.systray_visible,
                                        self.user_settings.polling,
                                        self.user_settings.polling_interval,
                                        self.user_settings.device_list,
-                                       self.user_settings.systray_messages)
+                                       self.user_settings.systray_messages,
+                                       self.user_settings.upgrade_notify,
+                                       self.user_settings.upgrade_pending_update_time,
+                                       upgrade_msg)
 
         self.updateControls()
 
@@ -61,14 +72,16 @@ class SettingsDialog(QDialog, Ui_SettingsDialog_base):
         self.ScanCommandLineEdit.setText(self.user_settings.cmd_scan)
         self.SystemTraySettings.systray_visible = self.user_settings.systray_visible
         self.SystemTraySettings.systray_messages = self.user_settings.systray_messages
+        self.SystemTraySettings.upgrade_notify = self.user_settings.upgrade_notify
         self.SystemTraySettings.updateUi()
 
 
     def updateData(self):
         self.user_settings.systray_visible = self.SystemTraySettings.systray_visible
         self.user_settings.systray_messages = self.SystemTraySettings.systray_messages
-        self.user_settings.cmd_scan = unicode(self.ScanCommandLineEdit.text())
+        self.user_settings.cmd_scan = to_unicode(self.ScanCommandLineEdit.text())
         self.user_settings.auto_refresh = bool(self.AutoRefreshCheckBox.isChecked())
+        self.user_settings.upgrade_notify = self.SystemTraySettings.upgrade_notify
 
         if self.RefreshCurrentRadioButton.isChecked():
             self.user_settings.auto_refresh_type = 1

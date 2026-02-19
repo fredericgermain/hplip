@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ljzjscolor.h : Interface for the LJZjsColor class
 
-  Copyright (c) 1996 - 2006, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -57,8 +57,11 @@ protected:
 #endif
 
 private:
+	bool IsLJZjsColor2Printer(SystemServices* pSS);
     virtual DRIVER_ERROR    EndPage ();
     virtual DRIVER_ERROR    SendPlaneData (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride);
+	virtual DRIVER_ERROR    SendPlaneData_LJZjsColor (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride);
+	virtual DRIVER_ERROR    SendPlaneData_LJZjsColor2 (int iPlaneNumber, HPLJZjsJbgEncSt *se, HPLJZjcBuff *pcBuff, BOOL bLastStride);		
 
 }; // LJZjsColor
 
@@ -97,6 +100,14 @@ public:
         "HP Color LaserJet 1600\0"     // models with null at end of each
         "HP Color LaserJet 2600n\0"
         "HP Color LaserJet CP1215\0"
+		"HP LaserJet CP1025\0"
+		"HP LaserJet CP1021\0"
+		"HP LaserJet CP1022\0"
+		"HP LaserJet CP1023\0"
+		"HP LaserJet CP1025nw\0"
+		"HP LaserJet CP1026nw\0"
+		"HP LaserJet CP1027nw\0"
+		"HP LaserJet CP1028nw\0"
     ) {m_iPrinterType = eLJZjsColor;}
     inline Printer* CreatePrinter(SystemServices* pSS) const { return new LJZjsColor(pSS); }
 	inline PRINTER_TYPE GetPrinterType() const { return eLJZjsColor;}

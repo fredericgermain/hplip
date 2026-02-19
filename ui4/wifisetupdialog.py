@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,21 +21,22 @@
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
-from base import device, utils, models, wifi
+from base import device, models, wifi, LedmWifi, CdmWifi
 from base.codes import *
-from ui_utils import *
+from base.sixext import  to_unicode
+from .ui_utils import *
+from base.sixext import PY3, to_bytes_utf8, to_unicode, to_string_latin, to_string_utf8, xStringIO
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from wifisetupdialog_base import Ui_Dialog
-
-
+from .wifisetupdialog_base import Ui_Dialog
 
 PAGE_INTRO = 0 # Ask user to plugin temp USB connection
 PAGE_DEVICES = 1 # Select a probed USB device
@@ -54,6 +55,86 @@ SUCCESS_CONNECTED = 2
 
 ASSOCIATE_DELAY = 30
 REFRESH_INTERVAL = 20
+
+
+class PasswordDialog(QDialog):
+    def __init__(self, prompt, parent=None, name=None, modal=0, fl=0):
+        QDialog.__init__(self, parent)
+        # Application icon
+        self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))
+        self.prompt = prompt
+
+        Layout= QGridLayout(self)
+        Layout.setMargin(11)
+        Layout.setSpacing(6)
+
+        self.PromptTextLabel = QLabel(self)
+        Layout.addWidget(self.PromptTextLabel,0,0,1,3)
+
+        self.UsernameTextLabel = QLabel(self)
+        Layout.addWidget(self.UsernameTextLabel,1,0)
+
+        self.UsernameLineEdit = QLineEdit(self)
+        self.UsernameLineEdit.setEchoMode(QLineEdit.Normal)
+        Layout.addWidget(self.UsernameLineEdit,1,1,1,2)
+
+        self.PasswordTextLabel = QLabel(self)
+        Layout.addWidget(self.PasswordTextLabel,2,0)
+
+        self.PasswordLineEdit = QLineEdit(self)
+        self.PasswordLineEdit.setEchoMode(QLineEdit.Password)
+        Layout.addWidget(self.PasswordLineEdit,2,1,1,2)
+
+        self.OkPushButton = QPushButton(self)
+        Layout.addWidget(self.OkPushButton,3,2)
+
+        self.languageChange()
+
+        self.resize(QSize(420,163).expandedTo(self.minimumSizeHint()))
+
+        self.connect(self.OkPushButton, SIGNAL("clicked()"), self.accept)
+        self.connect(self.PasswordLineEdit, SIGNAL("returnPressed()"), self.accept)
+
+    def setDefaultUsername(self, defUser, allowUsernameEdit = True):
+        self.UsernameLineEdit.setText(defUser)
+        if not allowUsernameEdit:
+            self.UsernameLineEdit.setReadOnly(True)
+            self.UsernameLineEdit.setStyleSheet("QLineEdit {background-color: lightgray}")
+    
+    def getUsername(self):
+        return to_unicode(self.UsernameLineEdit.text())
+
+
+    def getPassword(self):
+        return to_unicode(self.PasswordLineEdit.text())
+
+
+    def languageChange(self):
+        self.setWindowTitle(self.__tr("HP Device Manager - Enter Username/Password"))
+        self.PromptTextLabel.setText(self.__tr(self.prompt))
+        self.UsernameTextLabel.setText(self.__tr("Username:"))
+        self.PasswordTextLabel.setText(self.__tr("Password:"))
+        self.OkPushButton.setText(self.__tr("OK"))
+
+
+    def __tr(self,s,c = None):
+        return qApp.translate("SetupDialog",s,c)
+
+def showPasswordUI(prompt, userName=None, allowUsernameEdit=True):
+    try:
+        dlg = PasswordDialog(prompt, None)
+
+        if userName != None:
+            dlg.setDefaultUsername(userName, allowUsernameEdit)
+
+        if dlg.exec_() == QDialog.Accepted:
+            return (1,dlg.getUsername(), dlg.getPassword())
+        else:
+            return (0,"", "")
+    finally:
+        pass
+
+    return (0,"", "")
 
 
 class DeviceTableWidgetItem(QTableWidgetItem):
@@ -83,11 +164,15 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.hn = ''
         self.standalone = standalone
         self.initUi()
+        self.adapterName = 'Wifi0'
+        self.wifiObj = wifi
 
-        if self.device_uri is None:
-            QTimer.singleShot(0, self.showIntroPage)
-        else:
-            QTimer.singleShot(0, self.showNetworkPage)
+        #if self.device_uri is None:
+        #    QTimer.singleShot(0, self.showIntroPage)
+        #else:
+        #    QTimer.singleShot(0, self.showNetworkPage)
+
+        QTimer.singleShot(0, self.showIntroPage)
 
 
     #
@@ -101,6 +186,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.connect(self.CancelButton, SIGNAL("clicked()"), self.CancelButton_clicked)
         self.connect(self.BackButton, SIGNAL("clicked()"), self.BackButton_clicked)
         self.connect(self.NextButton, SIGNAL("clicked()"), self.NextButton_clicked)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         self.initIntroPage()
         self.initDevicesPage()
@@ -117,15 +203,9 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.InfoIcon.setPixmap(load_pixmap("info", "16x16"))
 
         if self.standalone:
-            self.MainTitleLabel.setText(self.__tr("""This utility allows you configure your wireless capable printer using a temporary USB connection. You will be prompted to disconnect the USB cable once wireless network setup is complete.
-
-<p><i>Note: This configuration utility does not setup (install) your printer on this computer. Use hp-setup to setup your printer after it has been configured on the network by this utility.</i></p>
-<p><i>Note: Only select wireless capable printers are supported by this utility.</i></p>"""))
+            self.MainTitleLabel.setText(self.__tr("This utility allows you configure your wireless capable printer using a temporary USB connection. You will be prompted to disconnect the USB cable once wireless network setup is complete. <p><i>Note: This configuration utility does not setup (install) your printer on this computer. Use hp-setup to setup your printer after it has been configured on the network by this utility.</i></p> <p><i>Note: Only select wireless capable printers are supported by this utility.</i></p>"))
         else:
-            self.MainTitleLabel.setText(self.__tr("""This utility allows you configure your wireless capable printer using a temporary USB connection. You will be prompted to disconnect the USB cable once wireless network setup is complete.
-
-<p><i>Note: Printer setup (installation) will continue after your printer is configured on the network.</i></p>
-<p><i>Note: Only select wireless capable printers are supported by this utility.</i></p>"""))
+            self.MainTitleLabel.setText(self.__tr("This utility allows you configure your wireless capable printer using a temporary USB connection. You will be prompted to disconnect the USB cable once wireless network setup is complete. <p><i>Note: Printer setup (installation) will continue after your printer is configured on the network.</i></p> <p><i>Note: Only select wireless capable printers are supported by this utility.</i></p>"))
 
 
     def showIntroPage(self):
@@ -153,7 +233,17 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
                 log.info("Searching on USB bus...")
                 filter_dict = {'wifi-config' : (operator.gt, WIFI_CONFIG_NONE)}
 
+                try:
+                    from base import smart_install
+                except ImportError:
+                    log.error("Failed to Import smart_install.py from base")
+                else:
+                    endWaitCursor()
+                    smart_install.disable(GUI_MODE, 'qt4')
+                    beginWaitCursor()
+
                 self.devices = device.probeDevices([self.bus], 0, 0, filter_dict, self.search)
+
         finally:
             endWaitCursor()
 
@@ -166,7 +256,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             if len(self.devices) == 1:
                 self.DevicesFoundLabel.setText(self.__tr("<b>1 wireless capable device found.</b> Click <i>Next</i> to continue."))
             else:
-                self.DevicesFoundLabel.setText(self.__tr("<b>%1 wireless capable devices found.</b> Select the device to install and click <i>Next</i> to continue.").arg(len(self.devices)))
+                self.DevicesFoundLabel.setText(self.__tr("<b>%s wireless capable devices found.</b> Select the device to install and click <i>Next</i> to continue." % len(self.devices)))
 
             self.loadDevicesTable()
 
@@ -238,8 +328,8 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         if self.dev is None:
             try:
                 self.dev = device.Device(self.device_uri)
-            except Error, e:
-                FailureUI(self, self.__tr("<b>Error opening device:</b><p>%1</p><p>(%2)</p>").arg(self.device_uri).arg(QString(e[0])))
+            except Error as e:
+                FailureUI(self, self.__tr("<b>Error opening device:</b><p>%s</p><p>(%s)</p>") %(self.device_uri, QString(e[0])))
 
                 if self.dev is not None:
                     self.dev.close()
@@ -250,18 +340,30 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.networks.clear()
         self.num_networks = 0
 
+        #Get authentication token
+        if self.wifiObj == CdmWifi:
+            if self.wifiObj.getCDMToken_pushbutton(self.dev):
+                log.debug("authenticated via getCDMToken_pushbutton")
+            else:
+                prompt = "Enter printer's username and password"
+                while True:
+                    rtnvalue,uname, password = showPasswordUI(prompt,userName="administrator")
+                    if rtnvalue == 0:
+                        return
+                    ret = self.wifiObj.getCDMToken(self.dev, uname, password)
+                    if ret == True:
+                        break
+                    prompt =  "Invalid Username/Password\n.Please renter printer's username and password" 
+    
+        #Get adaptor_id
+
         try:
-            self.adaptor_id, name, state, presence = wifi.getWifiAdaptorID(self.dev)
-        except Error, e:
+            adaptor_list = self.wifiObj.getWifiAdaptorID(self.dev)
+        except Error as e:
             self.showIOError(e)
             return
 
-        log.debug("Adaptor ID: %s" % self.adaptor_id)
-        log.debug("Adaptor name: %s" % name)
-        log.debug("Adaptor state: %s" % state)
-        log.debug("Adaptor presence: %s" % presence)
-
-        if self.adaptor_id == -1:
+        if len(adaptor_list) == 0: 
             FailureUI(self, self.__tr("<b>Unable to locate wireless hardware on device.</b>"))
             if self.dev is not None:
                 self.dev.close()
@@ -270,11 +372,19 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
         log.debug("Turning on wireless radio...")
         try:
-            wifi.setAdaptorPower(self.dev, self.adaptor_id)
-        except Error, e:
+            self.adaptor_id, self.adapterName, state, presence =  self.wifiObj.setAdaptorPower(self.dev, adaptor_list)
+        except Error as e:
             self.showIOError(e)
             return
+        if self.adaptor_id == -1:
+            FailureUI(self, self.__tr("<b>Unable to turn on wireless adaptor.</b>"))
+            if self.dev is not None:
+                self.dev.close()
 
+        log.debug("Adaptor ID: %s" % self.adaptor_id)
+        log.debug("Adaptor name: %s" % self.adapterName)
+        log.debug("Adaptor state: %s" % state)
+        log.debug("Adaptor presence: %s" % presence)
         self.performScan()
         self.setNextButton(BUTTON_NEXT)
         self.displayPage(PAGE_NETWORK)
@@ -282,25 +392,23 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
     def performScan(self):
         beginWaitCursor()
-        error = False
         try:
-            self.ssid = unicode(self.SSIDLineEdit.text())
+            self.ssid = to_unicode(self.SSIDLineEdit.text())
             if self.directed and self.ssid:
                 try:
-                    self.networks = wifi.performScan(self.dev, self.ssid)
-                except Error, e:
+                    self.networks = self.wifiObj.performScan(self.dev, self.adapterName, self.ssid)                     
+                except Error as e:
                     self.showIOError(e)
                     return
             else:
-                try:
-                    self.networks = wifi.performScan(self.dev)
-                except Error, e:
+                try:                    
+                    self.networks = self.wifiObj.performScan(self.dev, self.adapterName)
+                except Error as e:
                     self.showIOError(e)
                     return
         finally:
             self.dev.close()
             endWaitCursor()
-
         self.num_networks = self.networks['numberofscanentries']
         self.clearNetworksTable()
 
@@ -311,7 +419,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             if self.num_networks == 1:
                 self.NetworksFoundLabel.setText(self.__tr("<b>1 wireless network found. </b> If the wireless network you would like to connect to is not listed, try entering a wireless network name and/or press <i>Search</i> to search again."))
             else:
-                self.NetworksFoundLabel.setText(self.__tr("<b>%1 wireless networks found.</b> If the wireless network you would like to connect to is not listed, try entering a wireless network name and/or press <i>Search</i> to search again.").arg(self.num_networks))
+                self.NetworksFoundLabel.setText(self.__tr("<b>%d wireless networks found.</b> If the wireless network you would like to connect to is not listed, try entering a wireless network name and/or press <i>Search</i> to search again." %self.num_networks))
 
             self.loadNetworksTable()
 
@@ -343,12 +451,12 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
 
     def loadNetworksTable(self):
-        self.n, self.network = 0, u''
+        self.n, self.network = 0, to_unicode('')
         if self.num_networks:
             beginWaitCursor()
             try:
                 if self.show_extended:
-                    for n in xrange(self.num_networks):
+                    for n in range(self.num_networks):
                         bssid = self.networks['bssid-%d' % n]
                         ss = self.networks['signalstrength-%d' % n]
                         try:
@@ -377,8 +485,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
                 self.NetworksTableWidget.setColumnCount(len(headers))
                 self.NetworksTableWidget.setHorizontalHeaderLabels(headers)
                 enabled_flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
-
-                for n in xrange(self.num_networks):
+                for n in range(self.num_networks):
                     name = self.networks['ssid-%d' % n]
 
                     if name == '(unknown)':
@@ -406,14 +513,14 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
                     i = QTableWidgetItem(QString(name))
                     if flags is not None: i.setFlags(flags)
-                    i.setData(Qt.UserRole, QVariant(n))
+                    i.setData(Qt.UserRole, n)
                     self.NetworksTableWidget.setItem(n, 0, i)
 
                     pixmap = load_pixmap('signal%d' % ss, 'other')
                     if self.show_extended:
-                        i = QTableWidgetItem(QIcon(pixmap), self.__tr("%1/5 (%2 dBm)").arg(ss).arg(dbm))
+                        i = QTableWidgetItem(QIcon(pixmap), self.__tr("%s/5 (%s dBm)" %(ss, dbm)))
                     else:
-                        i = QTableWidgetItem(QIcon(pixmap), self.__tr("%1/5").arg(ss))
+                        i = QTableWidgetItem(QIcon(pixmap), self.__tr("%s/5" % ss))
                     if flags is not None: i.setFlags(flags)
                     self.NetworksTableWidget.setItem(n, 1, i)
 
@@ -438,7 +545,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
                         if flags is not None: i.setFlags(flags)
                         self.NetworksTableWidget.setItem(n, 6, i)
 
-                        i = QTableWidgetItem(QString("%1/%2").arg(lat).arg(lng))
+                        i = QTableWidgetItem(QString("%s/%s" % (lat, lng)))
                         if flags is not None: i.setFlags(flags)
                         self.NetworksTableWidget.setItem(n, 7, i)
 
@@ -460,7 +567,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
     def NetworksTableWidget_itemSelectionChanged(self):
         row = self.NetworksTableWidget.currentRow()
         item = self.NetworksTableWidget.item(row, 0)
-        n, ok = item.data(Qt.UserRole).toInt()
+        n, ok = value_int(item.data(Qt.UserRole))
         if ok:
             sec = self.networks['encryptiontype-%d' % n]
             if sec.lower() == 'none':
@@ -539,23 +646,27 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.SSIDLabel_2.setText(QString(self.network))
         self.ip = '0.0.0.0'
         self.hn = ''
+        ss_max, ss_min, ss_val, ss_dbm = 5, 0, 0, -200
+        vsa_codes = []
         self.success = SUCCESS_NOT_CONNECTED
-
         beginWaitCursor()
         try:
             try:
-                self.ip, _, addressmode, subnetmask, gateway, pridns, sec_dns = wifi.getIPConfiguration(self.dev, self.adaptor_id)
-                vsa_codes = wifi.getVSACodes(self.dev)
-                ss_max, ss_min, ss_val, ss_dbm = wifi.getSignalStrength(self.dev, self.adaptor_id)
-                self.hn = wifi.getHostname(self.dev)
-            except Error, e:
+                self.ip,_,addressmode, subnetmask, gateway, pridns, sec_dns= self.wifiObj.getIPConfiguration(self.dev, self.adapterName)
+                if self.ip == "0.0.0.0":
+                    if not self.wifiObj == CdmWifi:
+                        self.ip, subnetmask, gateway, pri_dns, sec_dns, addressmode = self.wifiObj.getwifiotherdetails(self.dev,self.adapterName)
+                vsa_codes = self.wifiObj.getVSACodes(self.dev, self.adapterName)
+                ss_max, ss_min, ss_val, ss_dbm = self.wifiObj.getSignalStrength(self.dev, self.adapterName,self.network, self.adaptor_id)                
+                self.hn = self.wifiObj.getHostname(self.dev)
+            except Error as e:
                 self.showIOError(e)
                 return
         finally:
             self.dev.close()
             endWaitCursor()
 
-        if addressmode.lower() == 'dhcp':
+        if 'dhcp' or 'default' in addressmode.lower():
             self.success = SUCCESS_CONNECTED
 
         elif addressmode.lower() == 'autoip':
@@ -567,18 +678,19 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.pages = []
 
         if self.success == SUCCESS_NOT_CONNECTED:
-            self.pages.append((self.__tr("<b>Your printer has not been connected to the wireless network.</b> A valid connection to a wireless network can take up to 2 minutes. This screen will automatically refresh every %1 seconds.<p>If your printer fails to connect within a reasonable time, there may be a problem with your configuration.").arg(REFRESH_INTERVAL), load_pixmap('error', '16x16')))
+            self.pages.append((self.__tr("<b>Your printer has not been connected to the wireless network.</b> A valid connection to a wireless network can take up to 2 minutes. This screen will automatically refresh every %s seconds.<p>If your printer fails to connect within a reasonable time, there may be a problem with your configuration." % REFRESH_INTERVAL), load_pixmap('error', '16x16')))
             self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
 
         elif self.success == SUCCESS_AUTO_IP:
-            self.pages.append((self.__tr("Your printer has been connected to the wireless network, but it has been assigned an address which may not be usable."), load_pixmap('warning', '16x16')))
-            self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
+#            self.pages.append((self.__tr("Your printer has been connected to the wireless network, but it has been assigned an address which may not be usable."), load_pixmap('warning', '16x16')))
+            self.pages.append((self.__tr("Your printer has been connected to the wireless network and has been assinged a IP. Now run <pre>hp-setup %s</pre>  If IP is not accessible, try again for another IP."%self.ip), load_pixmap('warning', '16x16')))
+       #     self.RefreshTimer.start(REFRESH_INTERVAL * 1000)
+            self.CancelButton.setEnabled(False)
+            self.BackButton.setEnabled(False)
+            self.RefreshTimer.stop()
 
         else: # SUCCESS_CONNECTED
-            if self.standalone:
-                self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable. To setup the printer, now run <pre>hp-setup.</pre>"), load_pixmap('info', '16x16')))
-            else:
-                self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable."), load_pixmap('info', '16x16')))
+            self.pages.append((self.__tr("Your printer has been successfully configured on the wireless network. You may now unplug the USB cable. To setup the printer, now run <pre>hp-setup %s</pre>"%self.ip), load_pixmap('info', '16x16')))
             self.CancelButton.setEnabled(False)
             self.BackButton.setEnabled(False)
             self.RefreshTimer.stop()
@@ -598,24 +710,25 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.DNSLabel.setText(QString(pridns))
         self.NextButton.setEnabled(True)
 
-        self.SignalStrengthLabel.setText(QString("%1/%2 (%3 dBm)").arg(ss_val).arg(ss_max).arg(ss_dbm))
+        self.SignalStrengthLabel.setText(QString("%s/%s (%s dBm)" % (ss_val, ss_max, ss_dbm)))
         self.SignalStrengthIcon.setPixmap(load_pixmap('signal%d' % ss_val, 'other'))
 
         for c, s in vsa_codes:
-            ss = s.lower()
-            if ss.startswith("info"):
-                pixmap = load_pixmap('info', '16x16')
+            if c :
+                ss = s.lower()
+                if ss.startswith("info"):
+                    pixmap = load_pixmap('info', '16x16')
 
-            elif ss.startswith("warn"):
-                pixmap = load_pixmap('warning', '16x16')
+                elif ss.startswith("warn"):
+                    pixmap = load_pixmap('warning', '16x16')
 
-            elif ss.startswith("crit"):
-                pixmap = load_pixmap('error', '16x16')
+                elif ss.startswith("crit"):
+                    pixmap = load_pixmap('error', '16x16')
 
-            else:
-                pixmap = load_pixmap('info', '16x16')
+                else:
+                    pixmap = load_pixmap('info', '16x16')
 
-            self.pages.append((device.queryString("vsa_%s" % str(c).zfill(3)), pixmap))
+                self.pages.append((device.queryString("vsa_%s" % str(c).zfill(3)), pixmap))
 
         num_pages = len(self.pages)
         self.PageSpinBox.setMaximum(num_pages)
@@ -623,7 +736,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         self.PageSpinBox.setValue(1)
         self.PageLabel.setEnabled(num_pages>1)
         self.PageLabel2.setEnabled(num_pages>1)
-        self.PageLabel.setText(self.__tr("of %1").arg(num_pages))
+        self.PageLabel.setText(self.__tr("of %s", str(num_pages)))
         self.page_index = 0
         self.ExitLabel.setText(self.pages[self.page_index][0])
         self.ExitIcon.setPixmap(self.pages[self.page_index][1])
@@ -644,12 +757,12 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
     # ASSOCIATE
     #
 
-    def associate(self, key=u''):
+    def associate(self, key=to_unicode('')):
         beginWaitCursor()
         try:
-            try:
-                alg, mode, secretid = wifi.getCryptoSuite(self.dev)
-            except Error, e:
+            try:                
+                alg, mode, secretid = self.wifiObj.getCryptoSuite(self.dev, self.adapterName)
+            except Error as e:
                 self.showIOError(e)
                 return
 
@@ -661,8 +774,12 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
         beginWaitCursor()
         try:
             try:
-                ret = wifi.associate(self.dev, self.network, self.mode, self.security, key)
-            except Error, e:
+                if self.wifiObj == CdmWifi:
+
+                    self.wifiObj.associate(self.dev, self.wpaVersionPreference, self.network, self.authenticationMode, self.security, key)
+                else:
+                    self.wifiObj.associate(self.dev, self.adapterName, self.network, self.mode, self.security, key)
+            except Error as e:
                 self.showIOError(e)
                 return
         finally:
@@ -683,6 +800,8 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             if row != -1:
                 self.device_uri = self.DevicesTableWidget.item(row, 0).device_uri
                 self.mq = device.queryModelByURI(self.device_uri)
+                
+                self.getWifiObject(self.mq['wifi-config'])               
                 back_end, is_hp, bus, model, serial, dev_file, host, zc, port = device.parseDeviceURI(self.device_uri)
                 self.model = models.normalizeModelName(model).lower()
 
@@ -696,18 +815,22 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
             if row != -1:
                 i = self.NetworksTableWidget.item(row, 0)
                 if i is not None:
-                    self.network = unicode(i.text())
+                    self.network = to_unicode(i.text())
                     log.debug("Selected network SSID: %s" % self.network)
-                    self.n, ok = i.data(Qt.UserRole).toInt()
+                    self.n, ok = value_int(i.data(Qt.UserRole))
                     if ok:
-                        self.security = self.networks['encryptiontype-%d' % self.n]
+                        self.security = self.networks.get('encryptiontype-%d'%self.n)
                         log.debug("Security: %s" % self.security)
 
-                        self.mode = self.networks['communicationmode-%d' % self.n]
+                        self.mode = self.networks.get('communicationmode-%d'%self.n)
                         log.debug("Mode: %s" % self.mode)
 
-                        self.ss = self.networks['signalstrength-%d' % self.n]
+                        self.ss = self.networks.get('signalstrength-%d'%self.n)
                         log.debug("Signal strength: %s" % self.ss)
+
+                        self.wpaVersionPreference = self.networks.get('wpaVersionPreference-%d'%self.n)
+                        self.authenticationMode = self.networks.get('authenticationMode-%d'%self.n)
+                        
 
             if self.security.lower() != 'none':
                 self.showConfigWifiPage()
@@ -718,7 +841,7 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
                 self.showExitPage()
 
         elif p == PAGE_CONFIGURE_WIFI:
-            key = unicode(self.KeyLineEdit.text())
+            key = to_unicode(self.KeyLineEdit.text())
             self.associate(key)
             self.showAssociateProgressDialog()
             self.showExitPage()
@@ -806,11 +929,11 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
 
 
     def updateStepText(self, p):
-        self.StepText.setText(self.__tr("Step %1 of %2").arg(p+1).arg(self.max_page+1))
+        self.StepText.setText(self.__tr("Step %s of %s" % (p+1, self.max_page+1)))
 
 
     def showIOError(self, e):
-        FailureUI(self, self.__tr("<b>An I/O error occurred.</b><p>Please check the USB connection to your printer and try again.</p>(%1)").arg(QString(e[0])))
+        FailureUI(self, self.__tr("<b>An I/O error occurred.</b><p>Please check the USB connection to your printer and try again.</p>(%s)" % QString(e[0])))
 
         if self.dev is not None:
             self.dev.close()
@@ -821,4 +944,14 @@ class WifiSetupDialog(QDialog, Ui_Dialog):
     def __tr(self,s,c = None):
         return qApp.translate("WifiSetupDialog",s,c)
 
+    # The Wifi object here is not actual object, Dynamically relevant modules are selected based on 
+    # wifi-config value in the models file.
+    def getWifiObject(self,wifiConfVal):
+        if wifiConfVal == WIFI_CONFIG_LEDM:                    
+            self.wifiObj = LedmWifi
+        elif wifiConfVal == WIFI_CONFIG_CDM:
+            self.wifiObj = CdmWifi
+        else:                    
+            self.wifiObj = wifi
+        
 

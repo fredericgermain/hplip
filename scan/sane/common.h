@@ -2,7 +2,7 @@
 
   common.h - common code for scl, pml and soap backends
 
-  (c) 2001-2006 Copyright Hewlett-Packard Development Company, LP
+  (c) 2001-2006 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,7 +21,7 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  Contributing Authors: David Paschal, Don Welch, David Suffield 
+  Contributing Authors: David Paschal, Don Welch, David Suffield, Sarbeswar Meher 
 
 \************************************************************************************/
 
@@ -69,6 +69,7 @@
 #define STR_ADF_MODE_AUTO SANE_I18N("Auto")
 #define STR_ADF_MODE_FLATBED  SANE_I18N("Flatbed")
 #define STR_ADF_MODE_ADF  SANE_I18N("ADF")
+#define STR_ADF_MODE_CAMERA  SANE_I18N("Camera")
 
 #define STR_TITLE_ADVANCED SANE_I18N("Advanced")
 
@@ -107,6 +108,10 @@
 #define MAX_JPEG_COMPRESSION_FACTOR 100
 /* To prevent "2252" asserts on OfficeJet 600 series: */
 #define SAFER_JPEG_COMPRESSION_FACTOR 10
+
+
+#define MULTIPICK_DISABLE 0
+#define MULTIPICK_ENABLE 1
 
 #define BEND_GET_SHORT(s) (((s)[0]<<8)|((s)[1]))
 #define BEND_GET_LONG(s) (((s)[0]<<24)|((s)[1]<<16)|((s)[2]<<8)|((s)[3]))
@@ -183,5 +188,5 @@ int __attribute__ ((visibility ("hidden"))) NumListGetFirst( int * list );
 void __attribute__ ((visibility ("hidden"))) StrListClear( const char ** list );
 int __attribute__ ((visibility ("hidden"))) StrListIsInList( const char ** list, char * s );
 int __attribute__ ((visibility ("hidden"))) StrListAdd( const char ** list, char * s );
-
+char* __attribute__ ((visibility ("hidden"))) itoa(int value, char* str, int radix);
 #endif

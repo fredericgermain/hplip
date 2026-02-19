@@ -1,6 +1,6 @@
 /* libhpojip -- HP OfficeJet image-processing library. */
 
-/* Copyright (C) 1995-2002 Hewlett-Packard Company
+/* Copyright (C) 1995-2002 HP Company
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -17,7 +17,7 @@
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston,
  * MA 02111-1307, USA.
  *
- * In addition, as a special exception, Hewlett-Packard Company
+ * In addition, as a special exception, HP Company
  * gives permission to link the code of this program with any
  * version of the OpenSSL library which is distributed under a
  * license identical to that listed in the included LICENSE.OpenSSL
@@ -380,7 +380,7 @@ FUNC_STATUS WORD mat_convert (
 
         while (pwOut < (WORD*)pOutAfter)
         {
-            int prod0, prod1, prod2;
+            int prod0 = 0, prod1 = 0, prod2 = 0;
 
             /* The fixed-point calculations below are as follows:
              *     17.15 = input pixel

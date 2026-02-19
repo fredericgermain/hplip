@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,6 +20,8 @@
 #
 
 
+from base.sixext import  to_unicode
+
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
@@ -32,6 +34,6 @@ class FABNameTable(QTableWidget):
         
     def mimeData(self, items):
         data = QMimeData()
-        data.setText(u'|'.join([unicode(i.text()) for i in items]))
+        data.setText(to_unicode('|').join([to_unicode(i.text()) for i in items]))
         return data
     

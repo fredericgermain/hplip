@@ -2,7 +2,7 @@
 
   hpaio.h - HP SANE backend for multi-function peripherals (libsane-hpaio)
 
-  (c) 2001-2006 Copyright Hewlett-Packard Development Company, LP
+  (c) 2001-2006 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,7 +21,7 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  Contributing Authors: David Paschal, Don Welch, David Suffield 
+  Contributing Authors: David Paschal, Don Welch, David Suffield, Sarbeswar Meher 
 
 \************************************************************************************/
 
@@ -31,9 +31,10 @@
 #include "sane.h"
 #include "common.h"
 #include "mfpdtf.h"
-#include "hpip.h"
 #include "scl.h"
 #include "pml.h"
+#include "orblitei.h"
+#include "../../ip/hpip.h"
 
 /************************************************************************************/
 
@@ -57,6 +58,7 @@ enum hpaioOption_e {
                     OPTION_SCAN_RESOLUTION,
     GROUP_ADVANCED,
                     OPTION_CONTRAST,
+                    OPTION_BRIGHTNESS,
                     OPTION_COMPRESSION,
                     OPTION_JPEG_COMPRESSION_FACTOR,
                     OPTION_BATCH_SCAN,
@@ -133,6 +135,9 @@ struct  hpaioScanner_s
         SANE_Range              contrastRange;
         SANE_Int                defaultContrast, currentContrast;
 
+        SANE_Range              brightnessRange;
+        SANE_Int                defaultBrightness, currentBrightness;
+    
         SANE_String_Const       compressionList[MAX_LIST_SIZE];
         int                     defaultCompression[SCAN_MODE_LAST];
         SANE_Int                currentCompression;  /* One of the COMPRESSION_* values. */
@@ -198,12 +203,11 @@ struct  hpaioScanner_s
                 int             compat;
                 char            decipixelChar;
 
-                int             minXRes, minYRes;
-                int             maxXRes, maxYRes;
+                int             minRes, maxRes;
                 int             maxXExtent, maxYExtent;
-
-                int             adfCapability;
                 int             unloadAfterScan;
+                int             flatbedCapability, adfCapability;
+                int             minResAdf, maxResAdf;
 
                 PmlObject_t     objSupportedFunctions;
         } scl;

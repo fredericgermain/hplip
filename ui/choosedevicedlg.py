@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
 #
 
 from base.g import *
+from base.sixext import  to_unicode
 import sys
 from qt import *
 
@@ -96,7 +97,7 @@ class ChooseDeviceDlg(QDialog):
         return qApp.translate("ChooseDeviceDlg",s,c)
 
     def DevicesButtonGroup_clicked(self,a0):
-        self.device_uri = unicode(self.radio_buttons[a0].text())
+        self.device_uri = to_unicode(self.radio_buttons[a0].text())
 
 if __name__ == "__main__":
     a = QApplication(sys.argv)

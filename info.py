@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,10 +31,19 @@ import getopt
 import time
 import os
 
+
+
 # Local
 from base.g import *
 from base import device, status, utils, tui, module
 from prnt import cups
+
+try:
+    from importlib import import_module
+except ImportError as e:
+    log.debug(e)
+    from base.utils import dyn_import_mod as import_module
+
 
 try:
     restrict = True
@@ -42,10 +51,10 @@ try:
     devid_mode = '--id' in sys.argv # hack
     if devid_mode:
         log.set_level("none")
-        restrict = False
+
 
     mod = module.Module(__mod__, __title__, __version__, __doc__, None,
-                        (INTERACTIVE_MODE, GUI_MODE), (UI_TOOLKIT_QT4,),
+                        (INTERACTIVE_MODE, GUI_MODE), (UI_TOOLKIT_QT4, UI_TOOLKIT_QT5),
                         False, devid_mode)
 
     mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS,
@@ -76,6 +85,9 @@ try:
 
     device_uri = mod.getDeviceUri(device_uri, printer_name, restrict_to_installed_devices=restrict)
 
+    if not device_uri:
+        sys.exit(1)
+
     if mode in (INTERACTIVE_MODE, NON_INTERACTIVE_MODE):
         try:
             d = device.Device(device_uri, printer_name)
@@ -92,7 +104,7 @@ try:
             try:
                 d.open()
                 d.queryDevice()
-            except Error, e:
+            except Error as e:
                 log.error("Error opening device (%s)." % e.msg)
                 #sys.exit(1)
 
@@ -107,12 +119,12 @@ try:
             if devid_mode:
                 try:
                     if d.dq['deviceid']:
-                        print(d.dq['deviceid'])
+                        print((d.dq['deviceid']))
                     sys.exit(0)
                 except KeyError:
                     log.error("Device ID not available.")
             else:
-                dq_keys = d.dq.keys()
+                dq_keys = list(d.dq.keys())
                 dq_keys.sort()
 
                 log.info(log.bold("Device Parameters (dynamic data):"))
@@ -126,7 +138,7 @@ try:
                 log.info(log.bold(formatter.compose(("Parameter", "Value(s)"))))
                 log.info(formatter.compose(('-'*28, '-'*58)))
 
-                mq_keys = d.mq.keys()
+                mq_keys = list(d.mq.keys())
                 mq_keys.sort()
 
                 for key in mq_keys:
@@ -159,17 +171,12 @@ try:
             d.close()
 
     else: # GUI mode
-        try:
-            from PyQt4.QtGui import QApplication
-            from ui4.infodialog import InfoDialog
-        except ImportError:
-            log.error("Unable to load Qt4 support. Is it installed?")
-            sys.exit(1)
+        QApplication, ui_package = utils.import_dialog(ui_toolkit)
+        ui = import_module(ui_package + ".infodialog")
 
         if 1:
             app = QApplication(sys.argv)
-
-            dlg = InfoDialog(None, device_uri)
+            dlg = ui.InfoDialog(None, device_uri)
             dlg.show()
             try:
                 log.debug("Starting GUI loop...")

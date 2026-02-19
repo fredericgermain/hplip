@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,21 +21,22 @@
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils
 from prnt import cups
 from base.codes import *
-from ui_utils import *
-
+from .ui_utils import *
+from base.sixext import to_unicode
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from faxsetupdialog_base import Ui_Dialog
-from deviceuricombobox import DEVICEURICOMBOBOX_TYPE_FAX_ONLY
+from .faxsetupdialog_base import Ui_Dialog
+from .deviceuricombobox import DEVICEURICOMBOBOX_TYPE_FAX_ONLY
 
 fax_enabled = prop.fax_build
 
@@ -48,7 +49,91 @@ if fax_enabled:
         fax_enabled = False
 
 if not fax_enabled:
-    log.error("Fax disabled.")
+    log.warn("Fax disabled.")
+
+class PasswordDialog(QDialog):
+    def __init__(self, prompt, parent=None, name=None, modal=0, fl=0):
+        QDialog.__init__(self, parent)
+        # Application icon
+        self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))
+        self.prompt = prompt
+
+        Layout= QGridLayout(self)
+        Layout.setMargin(11)
+        Layout.setSpacing(6)
+
+        self.PromptTextLabel = QLabel(self)
+        Layout.addWidget(self.PromptTextLabel,0,0,1,3)
+
+        self.UsernameTextLabel = QLabel(self)
+        Layout.addWidget(self.UsernameTextLabel,1,0)
+
+        self.UsernameLineEdit = QLineEdit(self)
+        self.UsernameLineEdit.setEchoMode(QLineEdit.Normal)
+        Layout.addWidget(self.UsernameLineEdit,1,1,1,2)
+
+        self.PasswordTextLabel = QLabel(self)
+        Layout.addWidget(self.PasswordTextLabel,2,0)
+
+        self.PasswordLineEdit = QLineEdit(self)
+        self.PasswordLineEdit.setEchoMode(QLineEdit.Password)
+        Layout.addWidget(self.PasswordLineEdit,2,1,1,2)
+
+        self.OkPushButton = QPushButton(self)
+        Layout.addWidget(self.OkPushButton,3,2)
+
+        self.CancelPushButton = QPushButton(self)
+        Layout.addWidget(self.CancelPushButton, 3, 1)        
+
+        self.languageChange()
+
+        self.resize(QSize(420,163).expandedTo(self.minimumSizeHint()))
+
+        self.connect(self.OkPushButton, SIGNAL("clicked()"), self.accept)
+        self.connect(self.CancelPushButton, SIGNAL("clicked()"), self.reject)
+        self.connect(self.PasswordLineEdit, SIGNAL("returnPressed()"), self.accept)
+
+    def setDefaultUsername(self, defUser, allowUsernameEdit = True):
+        self.UsernameLineEdit.setText(defUser)
+        if not allowUsernameEdit:
+            self.UsernameLineEdit.setReadOnly(True)
+            self.UsernameLineEdit.setStyleSheet("QLineEdit {background-color: lightgray}")
+    
+    def getUsername(self):
+        return to_unicode(self.UsernameLineEdit.text())
+
+
+    def getPassword(self):
+        return to_unicode(self.PasswordLineEdit.text())
+
+
+    def languageChange(self):
+        self.setWindowTitle(self.__tr("HP Device Manager - Enter Username/Password"))
+        self.PromptTextLabel.setText(self.__tr(self.prompt))
+        self.UsernameTextLabel.setText(self.__tr("Username:"))
+        self.PasswordTextLabel.setText(self.__tr("Password:"))
+        self.OkPushButton.setText(self.__tr("OK"))
+        self.CancelPushButton.setText(self.__tr("Cancel"))
+
+
+    def __tr(self,s,c = None):
+        return qApp.translate("SetupDialog",s,c)
+
+def showPasswordUI(prompt, userName=None, allowUsernameEdit=True):
+    try:
+        dlg = PasswordDialog(prompt, None)
+
+        if userName != None:
+            dlg.setDefaultUsername(userName, allowUsernameEdit)
+
+        if dlg.exec_() == QDialog.Accepted:
+            return (dlg.getUsername(), dlg.getPassword())
+        else:
+            return ("", "")
+    finally:
+        pass
+
+    return ("", "")
 
 
 class FaxSetupDialog(QDialog, Ui_Dialog):
@@ -58,7 +143,9 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
         self.device_uri = device_uri
         self.initUi()
         self.dev = None
-
+        self.fax_number = ''
+        self.fax_company_name = ''
+        self.call_password_ui = True
         self.user_settings = UserSettings()
         self.user_settings.load()
         self.user_settings.debug()
@@ -69,9 +156,11 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
     def initUi(self):
         # connect signals/slots
         self.connect(self.CancelButton, SIGNAL("clicked()"), self.CancelButton_clicked)
+        self.connect(self.CancelBSaveBtnutton, SIGNAL("clicked()"), self.SaveBtn_Clicked)
         self.connect(self.FaxComboBox, SIGNAL("DeviceUriComboBox_noDevices"), self.FaxComboBox_noDevices)
         self.connect(self.FaxComboBox, SIGNAL("DeviceUriComboBox_currentChanged"), self.FaxComboBox_currentChanged)
         self.FaxComboBox.setType(DEVICEURICOMBOBOX_TYPE_FAX_ONLY)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         # Application icon
         self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))
@@ -85,7 +174,10 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
         self.VoiceNumberLineEdit.setMaxLength(50)
         self.VoiceNumberLineEdit.setValidator(PhoneNumValidator(self.VoiceNumberLineEdit))
         self.EmailLineEdit.setMaxLength(50)
-
+        self.fax_number = to_unicode(self.FaxNumberLineEdit.text())
+        self.fax_company_name = to_unicode(self.NameCompanyLineEdit.text())        
+        
+        '''
         self.connect(self.NameCompanyLineEdit, SIGNAL("editingFinished()"),
                      self.NameCompanyLineEdit_editingFinished)
 
@@ -97,7 +189,7 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
 
         self.connect(self.FaxNumberLineEdit, SIGNAL("textChanged(const QString &)"),
                      self.FaxNumberLineEdit_textChanged)
-
+        '''
         self.connect(self.VoiceNumberLineEdit, SIGNAL("editingFinished()"),
                      self.VoiceNumberLineEdit_editingFinished)
 
@@ -109,6 +201,8 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
 
         self.connect(self.EmailLineEdit, SIGNAL("textChanged(const QString &)"),
                      self.EmailLineEdit_textChanged)
+         
+        self.connect(self.tabWidget,SIGNAL("currentChanged(int)"),self.Tabs_currentChanged)
 
         self.name_company_dirty = False
         self.fax_number_dirty = False
@@ -123,6 +217,9 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
             return
 
         self.FaxComboBox.updateUi()
+        self.tabWidget.setCurrentIndex(0)
+        self.fax_number = to_unicode(self.FaxNumberLineEdit.text())
+        self.fax_company_name = to_unicode(self.NameCompanyLineEdit.text())        
 
 
     def FaxComboBox_currentChanged(self, device_uri):
@@ -151,7 +248,7 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
     #
 
     def NameCompanyLineEdit_editingFinished(self):
-        self.saveNameCompany(unicode(self.NameCompanyLineEdit.text()))
+        self.saveNameCompany(to_unicode(self.NameCompanyLineEdit.text()))
 
 
     def NameCompanyLineEdit_textChanged(self, s):
@@ -160,22 +257,36 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
 
     def saveNameCompany(self, s):
         self.name_company_dirty = False
+        retn = False
         beginWaitCursor()
         try:
             try:
                 log.debug("Saving station name %s to device" % s)
+                if self.dev.isAuthRequired() == True and self.call_password_ui == True:
+                    promptText = "Enter the printer's username password password\n"                    
+                    while(True):
+                        username, password = showPasswordUI(promptText)
+                        if username == '' or password == '':
+                            return False
+                        respCode = self.dev.getCDMToken(username, password)
+                        if respCode != 200:
+                            promptText = "Invalid Username or Password!.\nRernter the printer's username password password\n"
+                            continue
+                        break                
                 self.dev.setStationName(s)
+                retn = True
             except Error:
-                CheckDeviceUI()
+                CheckDeviceUI(self)
         finally:
             endWaitCursor()
+            return retn
 
     #
     # Fax Number (for TTI header) (stored in device)
     #
 
     def FaxNumberLineEdit_editingFinished(self):
-        self.saveFaxNumber(unicode(self.FaxNumberLineEdit.text()))
+        self.saveFaxNumber(to_unicode(self.FaxNumberLineEdit.text()))
 
 
     def FaxNumberLineEdit_textChanged(self, s):
@@ -184,22 +295,36 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
 
     def saveFaxNumber(self, s):
         self.fax_number_dirty = False
+        retn = False
         beginWaitCursor()
         try:
             try:
                 log.debug("Saving fax number %s to device" % s)
+                if self.dev.isAuthRequired() == True and self.call_password_ui == True:
+                    promptText = "Enter the printer's username password password\n"
+                    while(True):
+                        username, password = showPasswordUI(promptText)
+                        if username == '' or password == '':
+                            return retn
+                        respCode = self.dev.getCDMToken(username, password)
+                        if respCode != 200:
+                            promptText = "Invalid Username or Password!.\nRernter the printer's username password password\n"
+                            continue
+                        break
                 self.dev.setPhoneNum(s)
+                retn=True
             except Error:
-                CheckDeviceUI()
+                CheckDeviceUI(self)
         finally:
             endWaitCursor()
+            return retn
 
     #
     # Voice Number (for coverpage) (stored in ~/.hplip/hplip.conf)
     #
 
     def VoiceNumberLineEdit_editingFinished(self):
-        self.saveVoiceNumber(unicode(self.VoiceNumberLineEdit.text()))
+        self.saveVoiceNumber(to_unicode(self.VoiceNumberLineEdit.text()))
 
 
     def VoiceNumberLineEdit_textChanged(self, s):
@@ -218,7 +343,7 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
     #
 
     def EmailLineEdit_editingFinished(self):
-        self.saveEmail(unicode(self.EmailLineEdit.text()))
+        self.saveEmail(to_unicode(self.EmailLineEdit.text()))
 
 
     def EmailLineEdit_textChanged(self, s):
@@ -239,19 +364,47 @@ class FaxSetupDialog(QDialog, Ui_Dialog):
     def CancelButton_clicked(self):
         self.close()
 
+    def SaveBtn_Clicked(self):
+
+        current_fax_num = self.fax_number = to_unicode(self.FaxNumberLineEdit.text())
+        current_fax_company = to_unicode(self.NameCompanyLineEdit.text())
+        
+        if current_fax_num != self.fax_number:            
+            if self.saveFaxNumber(self.fax_number) == False:
+                self.FaxNumberLineEdit.setText(current_fax_num)
+            else:
+                self.fax_number = to_unicode(self.FaxNumberLineEdit.text())
+            self.call_password_ui = False
+
+        if  current_fax_company != self.fax_company_name:            
+            if self.saveNameCompany(self.fax_company_name) == False:
+                self.NameCompanyLineEdit.setText(current_fax_company)
+            else:
+                self.fax_company_name = to_unicode(self.NameCompanyLineEdit.text())
+            self.call_password_ui = False
+
+    def Tabs_currentChanged(self, tab=0):
+        """ Called when the active tab changes.
+            Update newly displayed tab.
+        """        
+        if tab == 0:
+            self.updateHeaderTab()
+        elif tab ==1:    
+            self.updateCoverpageTab()
+            
 
     def updateHeaderTab(self):
         beginWaitCursor()
         try:
             try:
-                name_company = self.dev.getStationName()
+                name_company = to_unicode(self.dev.getStationName())
                 log.debug("name_company = '%s'" % name_company)
                 self.NameCompanyLineEdit.setText(name_company)
-                fax_number = self.dev.getPhoneNum()
+                fax_number = str(self.dev.getPhoneNum())
                 log.debug("fax_number = '%s'" % fax_number)
                 self.FaxNumberLineEdit.setText(fax_number)
             except Error:
-                CheckDeviceUI()
+                CheckDeviceUI(self)
         finally:
             endWaitCursor()
 

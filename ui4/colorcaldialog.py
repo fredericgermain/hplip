@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,20 +21,22 @@
 
 # StdLib
 import operator
+import signal
 
 # Local
 from base.g import *
 from base import device, utils, maint
 from prnt import cups
 from base.codes import *
-from ui_utils import *
+from base.sixext import  to_unicode
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from colorcaldialog_base import Ui_Dialog
+from .colorcaldialog_base import Ui_Dialog
 
 
 COLOR_CAL_TYPE_INITIAL = 1000
@@ -188,6 +190,7 @@ class ColorCalDialog(QDialog, Ui_Dialog):
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_noDevices"), self.DeviceUriComboBox_noDevices)
         self.connect(self.DeviceComboBox, SIGNAL("DeviceUriComboBox_currentChanged"), self.DeviceUriComboBox_currentChanged)
         self.DeviceComboBox.setFilter({'color-cal-type': (operator.gt, 0)})
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         if self.device_uri:
             self.DeviceComboBox.setInitialDevice(self.device_uri)
@@ -238,7 +241,7 @@ class ColorCalDialog(QDialog, Ui_Dialog):
                         t.append(p)
 
             try:
-                log.debug("%s(%s)" % (seq.func_name, ','.join([repr(x) for x in t])))
+                log.debug("%s(%s)" % (seq.__name__, ','.join([repr(x) for x in t])))
             except AttributeError:
                 pass
 
@@ -301,7 +304,7 @@ class ColorCalDialog(QDialog, Ui_Dialog):
 
 
     def endDeskjet450Page(self):
-        self.value = int(unicode(self.Deskjet450ComboBox.currentText()))
+        self.value = int(to_unicode(self.Deskjet450ComboBox.currentText()))
 
 
     def showCrick(self):
@@ -314,10 +317,10 @@ class ColorCalDialog(QDialog, Ui_Dialog):
     def showLBowPage(self, line_id, count=21):
         self.LBowComboBox.clear()
         self.LBowIcon.setPixmap(load_pixmap('color_adj', 'other'))
-        self.LBowLabel.setText(self.__tr("Line %1:").arg(line_id))
+        self.LBowLabel.setText(self.__tr("Line %s:"%line_id))
 
         for x in range(count):
-            self.LBowComboBox.addItem(QString("%1%2").arg(line_id).arg(x+1))
+            self.LBowComboBox.addItem(QString("%s%s"%(line_id, x+1)))
 
         self.displayPage(PAGE_LBOW)
 
@@ -342,13 +345,13 @@ class ColorCalDialog(QDialog, Ui_Dialog):
             self.ConneryGrayLetterComboBox.addItem(QString(x))
 
         for x in range(13):
-            self.ConneryGrayNumberComboBox.addItem(QString("%1").arg(x+1))
+            self.ConneryGrayNumberComboBox.addItem(QString("%s"%x+1))
 
         for x in 'PQRSTUV':
             self.ConneryColorLetterComboBox.addItem(QString(x))
 
         for x in range(6):
-            self.ConneryColorNumberComboBox.addItem(QString("%1").arg(x+1))
+            self.ConneryColorNumberComboBox.addItem(QString("%s"%x+1))
 
         self.displayPage(PAGE_CONNERY)
 
@@ -413,7 +416,7 @@ class ColorCalDialog(QDialog, Ui_Dialog):
         if p is None or not self.step_max:
             self.StepText.setText(QString(""))
         else:
-            self.StepText.setText(self.__tr("Step %1 of %2").arg(p).arg(self.step_max))
+            self.StepText.setText(self.__tr("Step %s of %s"%(p,self.step_max)))
 
 
     def setColorCalButton(self, typ=BUTTON_CALIBRATE):

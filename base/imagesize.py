@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -195,7 +195,7 @@ TYPE_MAP = {re.compile('^GIF8[7,9]a')              : ('image/gif', gifsize),
 def imagesize(filename, mime_type=''):
     width, height = -1, -1
 
-    f = file(filename, 'r')
+    f = open(filename, 'r')
     buffer = f.read(4096)
 
     if not mime_type:

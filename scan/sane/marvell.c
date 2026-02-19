@@ -2,7 +2,7 @@
 
   marvell.c - HP SANE backend support for Marvell based multi-function peripherals
 
-  (c) 2008 Copyright Hewlett-Packard Development Company, LP
+  (c) 2008 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -21,7 +21,7 @@
   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  Author: David Suffield
+  Author: David Suffield, Yashwant Sahu, Sarbeswar Meher
 
 \************************************************************************************/
 
@@ -48,6 +48,7 @@
 #include "marvell.h"
 #include "marvelli.h"
 #include "io.h"
+#include "utils.h"
 
 #define DEBUG_DECLARE_ONLY
 #include "sanei_debug.h"
@@ -56,77 +57,52 @@ static struct marvell_session *session = NULL;   /* assume one sane_open per pro
 
 static int bb_load(struct marvell_session *ps, const char *so)
 {
-   char home[128];
-   char sz[255]; 
    int stat=1;
 
    /* Load hpmud manually with symbols exported. Otherwise the plugin will not find it. */ 
-   if ((ps->hpmud_handle = dlopen("libhpmud.so", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
+   if ((ps->hpmud_handle = load_library("libhpmud.so")) == NULL)
    {
-      BUG("unable to load restricted library: %s\n", dlerror());
-      goto bugout;
-   } 
+	   if ((ps->hpmud_handle = load_library("libhpmud.so.0")) == NULL)
+           goto bugout;
+   }
 
    /* Load math library manually with symbols exported (Ubuntu 8.04). Otherwise the plugin will not find it. */ 
-   if ((ps->math_handle = dlopen("libm.so", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
+   if ((ps->math_handle = load_library("libm.so")) == NULL)
    {
-      if ((ps->math_handle = dlopen("libm.so.6", RTLD_LAZY|RTLD_GLOBAL)) == NULL)
-      {
-         BUG("unable to load restricted library: %s\n", dlerror());
+      if ((ps->math_handle = load_library("libm.so.6")) == NULL)
          goto bugout;
-      }
    } 
 
-   if (hpmud_get_conf("[dirs]", "home", home, sizeof(home)) != HPMUD_R_OK)
-      goto bugout;
-   snprintf(sz, sizeof(sz), "%s/scan/plugins/%s", home, so);
-   if ((ps->bb_handle = dlopen(sz, RTLD_NOW|RTLD_GLOBAL)) == NULL)
+   if ((ps->bb_handle = load_plugin_library(UTILS_SCAN_PLUGIN_LIBRARY, so)) == NULL)
    {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
       SendScanEvent(ps->uri, EVENT_PLUGIN_FAIL);
       goto bugout;
    } 
    
-   if ((ps->bb_open = dlsym(ps->bb_handle, "bb_open")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+   if ((ps->bb_open = get_library_symbol(ps->bb_handle, "bb_open")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_close = dlsym(ps->bb_handle, "bb_close")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_close = get_library_symbol(ps->bb_handle, "bb_close")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_get_parameters = dlsym(ps->bb_handle, "bb_get_parameters")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_get_parameters = get_library_symbol(ps->bb_handle, "bb_get_parameters")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_is_paper_in_adf = dlsym(ps->bb_handle, "bb_is_paper_in_adf")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_is_paper_in_adf = get_library_symbol(ps->bb_handle, "bb_is_paper_in_adf")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_start_scan = dlsym(ps->bb_handle, "bb_start_scan")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_start_scan = get_library_symbol(ps->bb_handle, "bb_start_scan")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_end_scan = dlsym(ps->bb_handle, "bb_end_scan")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_end_scan = get_library_symbol(ps->bb_handle, "bb_end_scan")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_get_image_data = dlsym(ps->bb_handle, "bb_get_image_data")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+    if ((ps->bb_get_image_data = get_library_symbol(ps->bb_handle, "bb_get_image_data")) == NULL)
       goto bugout;
-   } 
-   if ((ps->bb_end_page = dlsym(ps->bb_handle, "bb_end_page")) == NULL)
-   {
-      BUG("unable to load restricted library %s: %s\n", sz, dlerror());
+
+   if ((ps->bb_end_page = get_library_symbol(ps->bb_handle, "bb_end_page")) == NULL)
       goto bugout;
-   } 
+
 
    stat=0;
 
@@ -136,21 +112,15 @@ bugout:
 
 static int bb_unload(struct marvell_session *ps)
 {
-   if (ps->bb_handle)
-   {   
-      dlclose(ps->bb_handle);
-      ps->bb_handle = NULL;
-   }  
-   if (ps->hpmud_handle)
-   {   
-      dlclose(ps->hpmud_handle);
-      ps->hpmud_handle = NULL;
-   }  
-   if (ps->math_handle)
-   {   
-      dlclose(ps->math_handle);
-      ps->math_handle = NULL;
-   }  
+    unload_library(ps->bb_handle);
+    ps->bb_handle = NULL;
+
+    unload_library(ps->hpmud_handle);
+    ps->hpmud_handle = NULL;
+
+    unload_library(ps->math_handle);
+    ps->math_handle = NULL;
+
    return 0;
 }
 
@@ -249,7 +219,20 @@ static int init_options(struct marvell_session *ps)
    ps->option[MARVELL_OPTION_GROUP_ADVANCED].type = SANE_TYPE_GROUP;
    ps->option[MARVELL_OPTION_GROUP_ADVANCED].cap = SANE_CAP_ADVANCED;
 
-   ps->option[MARVELL_OPTION_CONTRAST].name = SANE_NAME_CONTRAST;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].name = SANE_NAME_BRIGHTNESS;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].title = SANE_TITLE_BRIGHTNESS;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].desc = SANE_DESC_BRIGHTNESS;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].type = SANE_TYPE_INT;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].unit = SANE_UNIT_NONE;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].size = sizeof(SANE_Int);
+   ps->option[MARVELL_OPTION_BRIGHTNESS].cap = SANE_CAP_SOFT_SELECT | SANE_CAP_SOFT_DETECT | SANE_CAP_ADVANCED;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].constraint_type = SANE_CONSTRAINT_RANGE;
+   ps->option[MARVELL_OPTION_BRIGHTNESS].constraint.range = &ps->brightnessRange;
+   ps->brightnessRange.min = MARVELL_BRIGHTNESS_MIN;
+   ps->brightnessRange.max = MARVELL_BRIGHTNESS_MAX;
+   ps->brightnessRange.quant = 0;
+
+    ps->option[MARVELL_OPTION_CONTRAST].name = SANE_NAME_CONTRAST;
    ps->option[MARVELL_OPTION_CONTRAST].title = SANE_TITLE_CONTRAST;
    ps->option[MARVELL_OPTION_CONTRAST].desc = SANE_DESC_CONTRAST;
    ps->option[MARVELL_OPTION_CONTRAST].type = SANE_TYPE_INT;
@@ -330,9 +313,8 @@ static int set_extents(struct marvell_session *ps)
    }
    else
    {
-     ps->effectiveTlx = 0;  /* current setting is not valid, zero it */
-     ps->effectiveBrx = 0;
-     stat = 1;
+     ps->effectiveTlx = ps->currentTlx = 0;  /* current setting is not valid, zero it */
+     ps->effectiveBrx = ps->currentBrx = ps->brxRange.max;
    }
    if ((ps->currentBry > ps->currentTly) && (ps->currentBry - ps->currentTly > ps->min_height) && (ps->currentBry - ps->currentTly <= ps->tlyRange.max))
    {
@@ -341,9 +323,8 @@ static int set_extents(struct marvell_session *ps)
    }
    else
    {
-     ps->effectiveTly = 0;  /* current setting is not valid, zero it */
-     ps->effectiveBry = 0;
-     stat = 1;
+    ps->effectiveTly = ps->currentTly = 0;  /* current setting is not valid, zero it */
+    ps->effectiveBry = ps->currentBry = ps->bryRange.max;
    }
    return stat;
 }
@@ -365,6 +346,48 @@ static struct marvell_session *create_session()
    return ps;
 }
 
+static void set_supported_resolutions(struct marvell_session *ps)
+{
+    int i;
+    if(ps->scansrc & HPMUD_SCANSRC_ADF)
+    {
+       i = 0;
+       ps->adf_resolution_list[i++] = 1; /*Number of supported resolutions*/
+       ps->adf_resolution_list[i++] = 300;
+    }
+    if(ps->scansrc & HPMUD_SCANSRC_FLATBED)
+    {
+       i = 0;
+       ps->platen_resolution_list[i++] = 7; /*Number of supported resolutions*/
+       ps->platen_resolution_list[i++] = 75;
+       ps->platen_resolution_list[i++] = 100;
+       ps->platen_resolution_list[i++] = 150;
+       ps->platen_resolution_list[i++] = 200;
+       ps->platen_resolution_list[i++] = 300;
+       ps->platen_resolution_list[i++] = 600;
+       ps->platen_resolution_list[i++] = 1200;
+    }
+
+    if(ps->scansrc & HPMUD_SCANSRC_FLATBED)
+    {
+        ps->resolution_list[0] = ps->platen_resolution_list[0];
+        i = ps->platen_resolution_list[0] + 1;
+        while(i--)
+        {
+            ps->resolution_list[i] = ps->platen_resolution_list[i];
+        }
+    }
+    else 
+    {
+        ps->resolution_list[0] = ps->adf_resolution_list[0];
+        i = ps->adf_resolution_list[0] + 1;
+        while(i--)
+        {
+            ps->resolution_list[i] = ps->adf_resolution_list[i];
+        }
+        
+    }
+}
 /*
  * SANE APIs.
  */
@@ -393,7 +416,18 @@ SANE_Status marvell_open(SANE_String_Const device, SANE_Handle *handle)
    hpmud_query_model(session->uri, &ma);
    session->scan_type = ma.scantype;
    session->scansrc = ma.scansrc;
-   session->scancolor= ma.scancolor;      
+   
+   switch (ma.scantype)
+   {
+      case HPMUD_SCANTYPE_MARVELL:
+         session->version = MARVELL_1;
+		 break;
+	  case HPMUD_SCANTYPE_MARVELL2:
+         session->version = MARVELL_2;
+		 break;
+	  default:
+         session->version = MARVELL_1;
+   };
 
    if (hpmud_open_device(session->uri, ma.mfp_mode, &session->dd) != HPMUD_R_OK)
    {
@@ -412,7 +446,7 @@ SANE_Status marvell_open(SANE_String_Const device, SANE_Handle *handle)
       goto bugout;
    }
 
-   if (bb_load(session, "bb_marvell.so"))
+   if (bb_load(session, SCAN_PLUGIN_MARVELL))
    {
       stat = SANE_STATUS_IO_ERROR;
       goto bugout;
@@ -429,86 +463,59 @@ SANE_Status marvell_open(SANE_String_Const device, SANE_Handle *handle)
 
    /* Set supported Scan Modes and set sane option. */
    i=0;
-   
-   /* Tsunami doesnt support color scan, getting scan color option from the model file.*/
-   if ( session->scancolor == HPMUD_SCANCOLOR_MONO)
-   {
-       session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_LINEART;
-       session->scan_mode_map[i++] = CE_BLACK_AND_WHITE1;
-       session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_GRAY;
-       session->scan_mode_map[i++] = CE_GRAY8;        
-       DBG8("scan color  HPMUD_SCANCOLOR_MONO \n");        
-   }
-   /*  0 value set in the model file, set all the scan color option */
-   else
-   {   
-       session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_LINEART;
-       session->scan_mode_map[i++] = CE_BLACK_AND_WHITE1;
-       session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_GRAY;
-       session->scan_mode_map[i++] = CE_GRAY8;
-       session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_COLOR;
-       session->scan_mode_map[i++] = CE_RGB24;
-       DBG8("scan color  All \n");        
-   }
+   session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_LINEART;
+   session->scan_mode_map[i++] = CE_BLACK_AND_WHITE1;
+   session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_GRAY;
+   session->scan_mode_map[i++] = CE_GRAY8;
+   session->scan_mode_list[i] = SANE_VALUE_SCAN_MODE_COLOR;
+   session->scan_mode_map[i++] = CE_RGB24;
    marvell_control_option(session, MARVELL_OPTION_SCAN_MODE, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
 
    /* Determine scan input source. */
    i=0;
-   
    /* Some of the marvell devices supports both flatbed and ADF, No command to get the src types supported */
    /* Getting from the model file */
-   if ( session->scansrc == HPMUD_SCANSRC_BOTH)
-   {
-         session->input_source_list[i] = STR_ADF_MODE_ADF;
-         session->input_source_map[i++] = IS_ADF;
-         session->input_source_list[i] = STR_ADF_MODE_FLATBED;
-         session->input_source_map[i++] = IS_PLATEN;               
-         DBG8("scan src  HPMUD_SCANSRC_BOTH \n"); 
-   }
-   else if ( session->scansrc == HPMUD_SCANSRC_ADF)
+   if ( session->scansrc & HPMUD_SCANSRC_ADF)
    {
          session->input_source_list[i] = STR_ADF_MODE_ADF;
          session->input_source_map[i++] = IS_ADF;
          DBG8("scan src  HPMUD_SCANSRC_ADF \n"); 
    }
-   else if ( session->scansrc == HPMUD_SCANSRC_FLATBED)
+   if ( session->scansrc & HPMUD_SCANSRC_FLATBED)
    {
          session->input_source_list[i] = STR_ADF_MODE_FLATBED;
-         session->input_source_map[i++] = IS_PLATEN;               
-         DBG8("scan src  HPMUD_SCANSRC_FLATBED \n"); 
+         session->input_source_map[i++] = IS_PLATEN;
+         DBG8("scan src  HPMUD_SCANSRC_FLATBED \n");
     }
     /* Values if un specified in the, value is 0,  get ADF state from the printer */   
-  else if (session->bb_is_paper_in_adf(session) == 2) 
+   if (session->scansrc == HPMUD_SCANSRC_NA)
    {
-      session->input_source_list[i] = STR_ADF_MODE_FLATBED;
-      session->input_source_map[i++] = IS_PLATEN;
-      DBG8("scan src  b_is_paper_in_adf value  2 \n");       
-   }
-   else
-   {
-      session->input_source_list[i] = STR_ADF_MODE_ADF;
-      session->input_source_map[i++] = IS_ADF;
-      DBG8("scan src  b_is_paper_in_adf value not 2 \n");             
-   }
+     if (session->bb_is_paper_in_adf(session) == 2) 
+     {
+       session->input_source_list[i] = STR_ADF_MODE_FLATBED;
+       session->input_source_map[i++] = IS_PLATEN;
+       DBG8("scan src  b_is_paper_in_adf value  2 \n");
+     }
+     else
+     {
+       session->input_source_list[i] = STR_ADF_MODE_ADF;
+       session->input_source_map[i++] = IS_ADF;
+       DBG8("scan src  b_is_paper_in_adf value not 2 \n");
+     }
+    }
 
-      
    marvell_control_option(session, MARVELL_OPTION_INPUT_SOURCE, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */  
 
    /* Set supported resolutions. */
-   i=1;
-   session->resolution_list[i++] = 75;
-   session->resolution_list[i++] = 100;
-   session->resolution_list[i++] = 150;
-   session->resolution_list[i++] = 200;
-   session->resolution_list[i++] = 300;
-   session->resolution_list[i++] = 600;
-   session->resolution_list[i++] = 1200;
-   session->resolution_list[0] = i-1;    /* length of word_list */
+   set_supported_resolutions(session);
    marvell_control_option(session, MARVELL_OPTION_SCAN_RESOLUTION, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
    /* Set supported contrast. */
    marvell_control_option(session, MARVELL_OPTION_CONTRAST, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
+
+   /* Set supported brightness. */
+  marvell_control_option(session, MARVELL_OPTION_BRIGHTNESS, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
 
    /* Set x,y extents. See bb_open(). */
    marvell_control_option(session, MARVELL_OPTION_TL_X, SANE_ACTION_SET_AUTO, NULL, NULL); /* set default option */
@@ -622,7 +629,6 @@ SANE_Status marvell_control_option(SANE_Handle handle, SANE_Int option, SANE_Act
          else
          {  /* Set default. */
             ps->current_scan_mode = ps->scan_mode_map[0];
-            ps->scan_mode_map[i];
             stat = SANE_STATUS_GOOD;
          }
          break;
@@ -647,6 +653,19 @@ SANE_Status marvell_control_option(SANE_Handle handle, SANE_Int option, SANE_Act
                {
                   ps->current_input_source = ps->input_source_map[i];
                   stat = SANE_STATUS_GOOD;
+                  if(ps->current_input_source == IS_PLATEN) 
+                  {
+                    i = ps->platen_resolution_list[0] + 1;
+                    while(i--) ps->resolution_list[i] = ps->platen_resolution_list[i];
+                  }
+                  else
+                  {
+                     i = ps->adf_resolution_list[0] + 1;
+                     while(i--) ps->resolution_list[i] = ps->adf_resolution_list[i];
+                  }
+                  ps->current_resolution = ps->resolution_list[1];
+                  mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
+                  stat = SANE_STATUS_GOOD;
                   break;
                }
             }
@@ -654,6 +673,18 @@ SANE_Status marvell_control_option(SANE_Handle handle, SANE_Int option, SANE_Act
          else
          {  /* Set default. */
             ps->current_input_source = ps->input_source_map[0];
+            if(ps->current_input_source == IS_PLATEN) 
+            {
+              i = ps->platen_resolution_list[0] + 1;
+              while(i--) ps->resolution_list[i] = ps->platen_resolution_list[i];
+            }
+            else
+            {
+              i = ps->adf_resolution_list[0] + 1;
+              while(i--) ps->resolution_list[i] = ps->adf_resolution_list[i];
+            }
+            ps->current_resolution = ps->resolution_list[1];
+            mset_result |= SANE_INFO_RELOAD_PARAMS | SANE_INFO_RELOAD_OPTIONS;
             stat = SANE_STATUS_GOOD;
          }
          break;
@@ -675,6 +706,11 @@ SANE_Status marvell_control_option(SANE_Handle handle, SANE_Int option, SANE_Act
                   break;
                }
             }
+            if (stat != SANE_STATUS_GOOD)
+            {
+                ps->current_resolution = ps->resolution_list[1];
+                stat = SANE_STATUS_GOOD;
+            }
          }
          else
          {  /* Set default. */
@@ -693,13 +729,41 @@ SANE_Status marvell_control_option(SANE_Handle handle, SANE_Int option, SANE_Act
             if (*int_value >= MARVELL_CONTRAST_MIN && *int_value <= MARVELL_CONTRAST_MAX)
             {
                ps->current_contrast = *int_value;
-               stat = SANE_STATUS_GOOD;
-               break;
             }
+            else
+            {
+              ps->current_contrast = MARVELL_CONTRAST_DEFAULT;
+            }
+            mset_result |= SANE_INFO_RELOAD_PARAMS;
+            stat = SANE_STATUS_GOOD;
          }
          else
          {  /* Set default. */
             ps->current_contrast = MARVELL_CONTRAST_DEFAULT;
+            stat = SANE_STATUS_GOOD;
+         }
+         break;
+      case MARVELL_OPTION_BRIGHTNESS:
+         if (action == SANE_ACTION_GET_VALUE)
+         {
+            *int_value = ps->currentBrightness;
+            stat = SANE_STATUS_GOOD;
+         }
+         else if (action == SANE_ACTION_SET_VALUE)
+         {
+            if (*int_value >= MARVELL_BRIGHTNESS_MIN && *int_value <= MARVELL_BRIGHTNESS_MAX)
+            {
+               ps->currentBrightness = *int_value;
+            }
+            else
+            {
+              ps->currentBrightness = MARVELL_BRIGHTNESS_DEFAULT;
+            }
+            stat = SANE_STATUS_GOOD;
+         }
+         else
+         {  /* Set default. */
+            ps->currentBrightness = MARVELL_BRIGHTNESS_DEFAULT;
             stat = SANE_STATUS_GOOD;
          }
          break;
@@ -837,7 +901,8 @@ SANE_Status marvell_start(SANE_Handle handle)
 //   int tmo=EXCEPTION_TIMEOUT*2;
 
    DBG8("sane_hpaio_start()\n");
-
+   ps->is_user_cancel = 0;
+   
    if (set_extents(ps))
    {
       BUG("invalid extents: tlx=%d brx=%d tly=%d bry=%d minwidth=%d minheight%d maxwidth=%d maxheight=%d\n",
@@ -853,6 +918,7 @@ SANE_Status marvell_start(SANE_Handle handle)
       if (ret == 0)
       {
          stat = SANE_STATUS_NO_DOCS;     /* done scanning */
+         SendScanEvent(ps->uri, EVENT_SCAN_ADF_NO_DOCS);
          goto bugout;
       }
       else if (ret < 0)
@@ -861,7 +927,6 @@ SANE_Status marvell_start(SANE_Handle handle)
          goto bugout;
       }
    }
-
    /* Start scan and get actual image traits. */
    if (ps->bb_start_scan(ps))
    {
@@ -869,6 +934,7 @@ SANE_Status marvell_start(SANE_Handle handle)
       goto bugout;
    }
 
+   SendScanEvent(ps->uri, EVENT_START_SCAN_JOB);
    memset(xforms, 0, sizeof(xforms));    
 
    /* Setup image-processing pipeline for xform. */
@@ -962,7 +1028,10 @@ SANE_Status marvell_read(SANE_Handle handle, SANE_Byte *data, SANE_Int maxLength
    }
 
    if (ret & IP_DONE)
+   {
       stat = SANE_STATUS_EOF;
+      SendScanEvent(ps->uri, EVENT_END_SCAN_JOB);
+   }
    else
       stat = SANE_STATUS_GOOD;
 
@@ -975,7 +1044,18 @@ bugout:
          ipClose(ps->ip_handle);  
          ps->ip_handle = 0;
       } 
-      ps->bb_end_page(ps, stat == SANE_STATUS_IO_ERROR ? 1: 0);
+       //If user has cancelled scan from device
+      if (ps->is_user_cancel)
+      {
+          //Don't do anything. sane_hpaio_cancel() will be invoked automatically
+          SendScanEvent(ps->uri, EVENT_SCAN_CANCEL);
+          return SANE_STATUS_CANCELLED;
+
+       }
+       else 
+	   {
+	       ps->bb_end_page(ps, stat == SANE_STATUS_IO_ERROR ? 1: 0);
+	   }
    }
 
    DBG8("-sane_hpaio_read() output=%p bytes_read=%d maxLength=%d status=%d\n", data, *length, maxLength, stat);
@@ -993,7 +1073,8 @@ void marvell_cancel(SANE_Handle handle)
     * Sane_cancel is always called at the end of the scan job. Note that on a multiple page scan job 
     * sane_cancel is called only once.
     */
-
+   ps->is_user_cancel = 1 ;
+   
    if (ps->ip_handle)
    {
       ipClose(ps->ip_handle); 

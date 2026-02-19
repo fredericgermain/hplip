@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 # Author: Don Welch
 #
 
-import powersettingsdialog
+from . import powersettingsdialog
 
 def settingsUI(d, parent):
     return powersettingsdialog.settingsUI(d, parent)

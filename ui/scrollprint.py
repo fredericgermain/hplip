@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,15 +21,16 @@
 
 # Local
 from base.g import *
-from base import utils, magic
+from base import utils, magic, os_utils
+from base.sixext import  to_unicode
 from prnt import cups
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from scrollview import ScrollView, PixmapLabelButton
-from allowabletypesdlg import AllowableTypesDlg
-from jobstoragemixin import JobStorageMixin
+from .scrollview import ScrollView, PixmapLabelButton
+from .allowabletypesdlg import AllowableTypesDlg
+from .jobstoragemixin import JobStorageMixin
 
 # Std Lib
 import os.path
@@ -41,8 +42,8 @@ class RangeValidator(QValidator):
         QValidator.__init__(self, parent, name)
 
     def validate(self, input, pos):
-        for x in unicode(input)[pos-1:]:
-            if x not in u'0123456789,- ':
+        for x in to_unicode(input)[pos-1:]:
+            if x not in '0123456789,- ':
                 return QValidator.Invalid, pos
 
         return QValidator.Acceptable, pos
@@ -79,7 +80,7 @@ class ScrollPrintView(ScrollView):
             "application/vnd.hp-HPGL" : (self.__tr("HP Graphics Language File"), '.hgl, .hpg, .plt, .prn'),
             "application/x-cshell" : (self.__tr("C Shell Script"), '.csh, .sh'),
             "application/x-csource" : (self.__tr("C Source Code"), '.c'),
-            "text/cpp": (self.__tr("C++ Source Code"), '.cpp, .cxx'),
+            "text/cpp": (self.__tr("C/C++ Source Code"), '.c, .cpp, .cxx'),
             "application/x-perl" : (self.__tr("Perl Script"), '.pl'),
             "application/x-python" : (self.__tr("Python Program"), '.py'),
             "application/x-shell" : (self.__tr("Shell Script"), '.sh'),
@@ -342,12 +343,12 @@ class ScrollPrintView(ScrollView):
 
         if dlg.exec_loop() == QDialog.Accepted:
                 results = dlg.selectedFile()
-                working_directory = unicode(dlg.dir().absPath())
-                log.debug("results: %s" % results)
+                working_directory = to_unicode(dlg.dir().absPath())
+                #log.debug("results: %s" % unicode(results))
                 user_conf.setWorkingDirectory(working_directory)
 
                 if results:
-                    self.addFile(unicode(results))
+                    self.addFile(to_unicode(results))
 
     def removeFile_clicked(self):
         try:
@@ -484,7 +485,7 @@ class ScrollPrintView(ScrollView):
     def pageRangeEdit_lostFocus(self):
         x = []
         try:
-            x = utils.expand_range(unicode(self.pageRangeEdit.text()))
+            x = utils.expand_range(to_unicode(self.pageRangeEdit.text()))
         except ValueError:
             log.error("Invalid page range entered.")
             self.invalid_page_range = True
@@ -970,7 +971,7 @@ class ScrollPrintView(ScrollView):
 
                 copies = int(self.copiesSpinBox.value())
                 all_pages = self.pages_button_group == 0
-                page_range = unicode(self.pageRangeEdit.text())
+                page_range = to_unicode(self.pageRangeEdit.text())
                 page_set = int(self.pageSetComboBox.currentItem())
 
                 cups.resetOptions()
@@ -1069,9 +1070,8 @@ class ScrollPrintView(ScrollView):
                     if not alt_nup:
                         cmd = ''.join([cmd, ' "', p, '"'])
 
-                    log.debug("Printing: %s" % cmd)
-
-                    code = os.system(cmd)
+                    #code = os_utils.execute(cmd)
+                    code, out = utils.run(cmd)
                     if code != 0:
                         log.error("Print command failed.")
                         self.form.FailureUI(self.__tr("Print command failed with error code %1").arg(code))

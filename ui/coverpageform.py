@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,13 +23,13 @@
 
 # Local
 from base.g import *
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 from fax import coverpages
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from coverpageform_base import CoverpageForm_base
+from .coverpageform_base import CoverpageForm_base
 
 
 
@@ -41,7 +41,7 @@ class CoverpageForm(CoverpageForm_base):
         self.preserveFormattingCheckBox.setChecked(preserve_formatting)
         self.prevCoverpageButton.setPixmap(load_pixmap('prev', '16x16'))
         self.nextCoverpageButton.setPixmap(load_pixmap('next', '16x16'))
-        self.coverpage_list = coverpages.COVERPAGES.keys()
+        self.coverpage_list = list(coverpages.COVERPAGES.keys())
 
         if cover_page_name:
             self.coverpage_index = self.coverpage_list.index(cover_page_name)

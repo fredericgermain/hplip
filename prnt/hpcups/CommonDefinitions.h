@@ -1,7 +1,7 @@
 /*****************************************************************************\
   CommonDefinitions.h : common header
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -26,6 +26,8 @@
   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
   THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+  Author: Naga Samrat Chowdary Narla,
 \*****************************************************************************/
 
 #ifndef COMMON_DEFINITIONS_H
@@ -46,7 +48,6 @@
 #include <syslog.h>
 #include <assert.h>
 #include <time.h>
-#include <sys/timeb.h>
 #include <string.h>
 
 #ifndef _GNU_SOURCE
@@ -54,9 +55,11 @@
 #endif
 
 #define BASIC_LOG          1
-#define SAVE_PCL_FILE      2
+#define SAVE_OUT_FILE      2
 #define SAVE_INPUT_RASTERS 4
-#define SEND_TO_PRINTER_ALSO    8
+#define SAVE_OUT_FILE_IN_BACKEND    8
+#define DONT_SEND_TO_BACKEND   16
+#define DONT_SEND_TO_PRINTER   32
 
 #define MAX_COLORTYPE 2
 #define NUMBER_PLANES 3
@@ -66,7 +69,7 @@
 #define _STRINGIZE(x) #x
 #define STRINGIZE(x) _STRINGIZE(x)
 
-#define dbglog(args...) {syslog(LOG_ERR, __FILE__ " " STRINGIZE(__LINE__) ": " args); \
+#define dbglog(args...) {syslog(LOG_DEBUG, __FILE__ " " STRINGIZE(__LINE__) ": " args); \
 fprintf(stderr, __FILE__ " " STRINGIZE(__LINE__) ": " args);}
 
 
@@ -333,11 +336,12 @@ typedef enum
 
 #define CUSTOM_MEDIA_SIZE 101
 
+#define EVENT_PRINT_FAILED_MISSING_PLUGIN 502
 enum COLORTYPE
 {
-    COLORTYPE_COLOR,       // 0
-    COLORTYPE_BLACK,       // 1
-    COLORTYPE_BOTH
+    COLORTYPE_COLOR     = 0,       
+    COLORTYPE_BLACK     = 1,    
+    COLORTYPE_BOTH      = 2
 };
 
 typedef struct ColorMap_s
@@ -408,6 +412,7 @@ typedef struct QualityAttributes_s
     int             media_type;
     int             media_subtype;
     int             print_quality;
+    char            hbpl1_print_quality[32];
     unsigned int    horizontal_resolution;
     unsigned int    vertical_resolution;
     unsigned int    actual_vertical_resolution;
@@ -427,6 +432,8 @@ typedef struct MediaAttributes_s
     int        vertical_overspray;
     int        left_overspray; 
     int        top_overspray;
+    char       PageSizeName[64];
+    char       MediaTypeName[64];
 } MediaAttributes;
 
 typedef struct JobAttributes_s
@@ -455,6 +462,10 @@ typedef struct JobAttributes_s
     char               printer_platform[32];
     char               printer_language[32];
     int                integer_values[16];
+    int                printer_platform_version;
+    int                pre_process_raster;
+    int                HPSPDClass;
+    int 	           args_duplex_mode;
 } JobAttributes;
 
 #endif // COMMON_DEFINITIONS_H

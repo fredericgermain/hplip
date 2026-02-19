@@ -2,7 +2,7 @@
 
   soapi.h - HP SANE backend support for soap based multi-function peripherals
 
-  (c) 2006,2008 Copyright Hewlett-Packard Development Company, LP
+  (c) 2006,2008 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -28,9 +28,12 @@
 #ifndef _SOAPI_H
 #define _SOAPI_H
 
-#define SOAP_CONTRAST_MIN -127
-#define SOAP_CONTRAST_MAX 127
+#define SOAP_CONTRAST_MIN -1000 /*According the SOAP spec*/
+#define SOAP_CONTRAST_MAX 1000
 #define SOAP_CONTRAST_DEFAULT 0
+#define SOAP_BRIGHTNESS_MIN -1000 /*According the SOAP spec*/
+#define SOAP_BRIGHTNESS_MAX 1000
+#define SOAP_BRIGHTNESS_DEFAULT 0
 
 #define MM_PER_INCH     25.4
 
@@ -41,6 +44,7 @@ enum SOAP_OPTION_NUMBER
                    SOAP_OPTION_SCAN_MODE,
                    SOAP_OPTION_SCAN_RESOLUTION,
    SOAP_OPTION_GROUP_ADVANCED,
+                   SOAP_OPTION_BRIGHTNESS,
                    SOAP_OPTION_CONTRAST,
                    SOAP_OPTION_COMPRESSION,
                    SOAP_OPTION_JPEG_QUALITY,
@@ -87,7 +91,7 @@ struct soap_session
    char uri[HPMUD_LINE_SIZE];
    char model[HPMUD_LINE_SIZE];
    int scan_type;
-
+   int user_cancel;
    IP_IMAGE_TRAITS image_traits;   /* specified by image header */      
 
    SANE_Option_Descriptor option[SOAP_OPTION_MAX];
@@ -101,6 +105,9 @@ struct soap_session
 
    SANE_Range contrastRange;
    SANE_Int currentContrast;
+
+   SANE_Range brightnessRange;
+   SANE_Int currentBrightness;
 
    SANE_String_Const compressionList[SF_MAX];
    enum SCAN_FORMAT compressionMap[SF_MAX];
@@ -118,7 +125,7 @@ struct soap_session
 
    int index;                    /* dime buffer index */
    int cnt;                      /* dime buffer count */
-   unsigned char buf[16384];    /* dime buffer */
+   unsigned char buf[65536];    /* dime buffer */ /*Setting to max 64K for dime buffer*/
 
    void *hpmud_handle;         /* returned by dlopen */
    void *math_handle;         /* returned by dlopen */

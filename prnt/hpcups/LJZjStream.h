@@ -1,7 +1,7 @@
 /*****************************************************************************\
   LJZjStream.h : Interface for the LJZjStream class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -26,6 +26,8 @@
   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
   THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+  Author: Naga Samrat Chowdary Narla,
 \*****************************************************************************/
 
 
@@ -41,10 +43,12 @@ public:
     ~LJZjStream ();
     DRIVER_ERROR    Encapsulate (RASTERDATA *InputRaster, bool bLastPlane);
     DRIVER_ERROR    StartPage(JobAttributes *pJA);
+    DRIVER_ERROR    StartPage_ljzjcolor2(JobAttributes *pJA);
     DRIVER_ERROR    Configure(Pipeline **pipeline);
     DRIVER_ERROR    FormFeed();
     DRIVER_ERROR    EndJob();
     DRIVER_ERROR    SendCAPy(int iOffset) {return NO_ERROR;}
+    DRIVER_ERROR    preProcessRasterData(cups_raster_t **cups_raster, cups_page_header2_t* firstpage_cups_header, char* pSwapedPagesFileName);
     bool            CanSkipRasters() {return false;}
 
 protected:
@@ -52,6 +56,7 @@ protected:
     virtual DRIVER_ERROR addJobSettings();
 private:
     DRIVER_ERROR    encapsulateColor(RASTERDATA *input);
+    DRIVER_ERROR    encapsulateColor2(RASTERDATA *input);
     DRIVER_ERROR    EndPage ();
     DRIVER_ERROR    sendBlankBands();
     PrintMode    m_PM;

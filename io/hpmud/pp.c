@@ -2,7 +2,7 @@
 
   pp.c - parallel port support for multi-point transport driver 
  
-  (c) 2004-2007 Copyright Hewlett-Packard Development Company, LP
+  (c) 2004-2007 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -1239,6 +1239,8 @@ int __attribute__ ((visibility ("hidden"))) pp_probe_devices(char *lst, int lst_
                hpmud_query_model(dev, &ma); 
                if (ma.support != HPMUD_SUPPORT_TYPE_HPLIP)
                {
+                  release_pp(fd);
+                  close(fd);
                   BUG("ignoring %s support=%d\n", dev, ma.support);
                   continue;           /* ignor, not supported */
                }

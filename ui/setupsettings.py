@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,9 +21,10 @@
 
 from base.g import *
 from base.codes import *
+from base.sixext import  to_unicode
 
 from qt import *
-from setupsettings_base import SetupSettings_base
+from .setupsettings_base import SetupSettings_base
 
 class SetupSettings(SetupSettings_base):
     def __init__(self, bus, filter, search, ttl, timeout, parent=None, name=None, modal=0, fl = 0):
@@ -75,7 +76,7 @@ class SetupSettings(SetupSettings_base):
         self.updateFilter(a0)
 
     def searchTermLineEdit_textChanged(self, a0):
-        self.search = unicode(a0)
+        self.search = to_unicode(a0)
 
     def ttlSpinBox_valueChanged(self, a0):
         self.ttl = a0

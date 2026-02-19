@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,19 +37,26 @@ import signal
 import tempfile
 #import threading
 #import Queue
-from cPickle import loads, HIGHEST_PROTOCOL
+from pickle import loads, HIGHEST_PROTOCOL
 
 # Local
 from base.g import *
 from base.codes import *
-from base import utils, device, status, models
-
+from base import utils, device, status, models, module, services, os_utils
+from base.sixext import PY3
+from base.sixext import to_bytes_utf8
 # dBus
 try:
     from dbus import lowlevel, SystemBus, SessionBus
     import dbus.service
     from dbus.mainloop.glib import DBusGMainLoop
-    from gobject import MainLoop, timeout_add, threads_init, io_add_watch, IO_IN
+    if PY3:
+        try:
+            from gi._gobject import MainLoop, timeout_add, threads_init, io_add_watch, IO_IN #python3-gi version: 3.4.0
+        except:
+            from gi.repository.GLib import MainLoop, timeout_add, threads_init, io_add_watch, IO_IN #python3-gi version: 3.8.0
+    else:
+        from gobject import MainLoop, timeout_add, threads_init, io_add_watch, IO_IN
     dbus_loaded = True
 except ImportError:
     log.error("dbus failed to load (python-dbus ver. 0.80+ required). Exiting...")
@@ -124,7 +131,7 @@ class StatusService(dbus.service.Object):
         else:
             t = {}
             dq = devices[device_uri].dq
-            [t.setdefault(x, str(dq[x])) for x in dq.keys()]
+            [t.setdefault(x, str(dq[x])) for x in list(dq.keys())]
             log.debug(t)
             return (device_uri, t)
 
@@ -190,7 +197,7 @@ class StatusService(dbus.service.Object):
                 return self.check_for_waiting_fax_return(device_uri, username, job_id)
 
         else: # return any matching one from cache. call mult. times to get all.
-            for u, j in devices[device_uri].faxes.keys():
+            for u, j in list(devices[device_uri].faxes.keys()):
                 if u == username:
                     return self.check_for_waiting_fax_return(device_uri, u, j)
 
@@ -215,6 +222,9 @@ class StatusService(dbus.service.Object):
 
 
 def check_device(device_uri):
+    if not PY3:
+        device_uri = str(device_uri)
+
     try:
         devices[device_uri]
     except KeyError:
@@ -319,7 +329,7 @@ def show_waiting_faxes(d):
 # Qt4 only
 def handle_hpdio_event(event, bytes_written):
     log.debug("Reading %d bytes from hpdio pipe..." % bytes_written)
-    total_read, data = 0, ''
+    total_read, data = 0, to_bytes_utf8('')
 
     while True:
         r, w, e = select.select([r3], [], [r3], 0.0)
@@ -328,7 +338,7 @@ def handle_hpdio_event(event, bytes_written):
         x = os.read(r3, PIPE_BUF)
         if not x: break
 
-        data = ''.join([data, x])
+        data = to_bytes_utf8('').join([data, x])
         total_read += len(x)
 
         if total_read == bytes_written: break
@@ -346,11 +356,48 @@ def handle_hpdio_event(event, bytes_written):
 
             send_toolbox_event(event, EVENT_DEVICE_UPDATE_REPLY)
 
+def handle_plugin_install():
+
+    child_process=os.fork()
+    if child_process== 0:    # child process
+        lockObj = utils.Sync_Lock("/tmp/pluginInstall.tmp")
+        lockObj.acquire()
+        child_pid=os.getpid()
+        from installer import pluginhandler
+        pluginObj = pluginhandler.PluginHandle()
+
+        if pluginObj.getStatus() != PLUGIN_INSTALLED:
+            os_utils.execute('hp-diagnose_plugin')
+        else:
+            log.debug("Device Plug-in was already installed. Not Invoking Plug-in installation wizard")
+
+        lockObj.release()
+        os.kill(child_pid,signal.SIGKILL)
+    else: #parent process
+        log.debug("Started Plug-in installation wizard")
+    
+
+def handle_printer_diagnose():
+    path = utils.which('hp-diagnose_queues')
+    if path:
+        path = os.path.join(path, 'hp-diagnose_queues')
+    else:
+        log.error("Unable to find hp-diagnose_queues on PATH.")
+        return
+
+    log.debug("Running hp-diagnose_queues: %s" % (path))
+    os.spawnlp(os.P_NOWAIT, path, 'hp-diagnose_queues','-s')
 
 
 def handle_event(event, more_args=None):
     #global polling_blocked
     #global request_queue
+
+   # checking if any zombie child process exists. then cleaning same.
+    try:
+        os.waitpid(0, os.WNOHANG)
+    except OSError:
+        pass
 
     log.debug("Handling event...")
 
@@ -359,6 +406,14 @@ def handle_event(event, more_args=None):
 
     event.debug()
 
+    if event.event_code == EVENT_AUTO_CONFIGURE:
+        handle_plugin_install()
+        return
+
+    if event.event_code == EVENT_DIAGNOSE_PRINTQUEUE:
+        handle_printer_diagnose()
+        return
+        
     if event.device_uri and check_device(event.device_uri) != ERROR_SUCCESS:
         return
 
@@ -409,6 +464,9 @@ def handle_event(event, more_args=None):
         # send EVENT_HISTORY_UPDATE signal to hp-toolbox
         send_toolbox_event(event, EVENT_HISTORY_UPDATE)
 
+        if event.event_code in (EVENT_PRINT_FAILED_MISSING_PLUGIN, EVENT_SCAN_FAILED_MISSING_PLUGIN,EVENT_FAX_FAILED_MISSING_PLUGIN):
+            handle_plugin_install()
+
     # Handle fax signals
     elif EVENT_FAX_MIN <= event.event_code <= EVENT_FAX_MAX and more_args:
         log.debug("Fax event")
@@ -439,6 +497,11 @@ def handle_event(event, more_args=None):
     elif event.event_code == EVENT_DEVICE_UPDATE_REPLY:
         bytes_written = int(more_args[1])
         handle_hpdio_event(event, bytes_written)
+
+    # Qt4 only
+    elif event.event_code == EVENT_CUPS_QUEUES_ADDED or event.event_code == EVENT_CUPS_QUEUES_REMOVED:
+        send_event_to_systray_ui(event)
+        send_toolbox_event(event, EVENT_HISTORY_UPDATE)
 
     # Qt4 only
     elif event.event_code == EVENT_SYSTEMTRAY_EXIT:
@@ -520,13 +583,13 @@ def run(write_pipe1=None,  # write pipe to systemtray
 
     try:
         system_bus = SystemBus(mainloop=dbus_loop)
-    except dbus.exceptions.DBusException, e:
+    except dbus.exceptions.DBusException as e:
         log.error("Unable to connect to dbus system bus. Exiting.")
         sys.exit(1)
 
     try:
         session_bus = dbus.SessionBus()
-    except dbus.exceptions.DBusException, e:
+    except dbus.exceptions.DBusException as e:
         if os.getuid() != 0:
             log.error("Unable to connect to dbus session bus. Exiting.")
             sys.exit(1)

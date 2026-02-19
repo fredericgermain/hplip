@@ -1,7 +1,7 @@
 /*****************************************************************************\
   HPCupsFilter.h : Interface for HPCupsFilter class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -35,6 +35,8 @@
 #include "SystemServices.h"
 #include "Compressor.h"
 #include "Job.h"
+#include <cups/ppd.h>
+#include "dbuscomm.h"
 
 #define		DBITMAPFILEHEADER		14
 #define		DBITMAPINFOHEADER		40
@@ -91,18 +93,18 @@ private:
     char            **m_argv;
     JobAttributes   m_JA;
     ppd_file_t      *m_ppd;
-
+    DBusCommunicator m_DBusComm;
+	
 private:
-
     void            closeFilter();
     void            cleanup();
-    void            getLogLevel();
+    //void            getLogLevel();
     DRIVER_ERROR    startPage (cups_page_header2_t *header);
     int             processRasterData(cups_raster_t *cups_raster);
     void            extractBlackPixels(cups_page_header2_t *cups_header,
                                        BYTE *kRaster, BYTE *rgbRaster);
     void            printCupsHeaderInfo(cups_page_header2_t *header);
-    bool            isBlankRaster(BYTE *input_raster, int length_in_bytes);
+    bool            isBlankRaster(BYTE *input_raster, cups_page_header2_t *header);
 	int             m_iLogLevel;
 
     void CreateBMPHeader(int width, int height, int planes, int bpp);
@@ -116,6 +118,11 @@ private:
     BYTE   *color_raster;
     BITMAPFILEHEADER    bmfh;
     BITMAPINFOHEADER    bmih;
+
+#ifdef UNITTESTING
+    friend class TestHPCupsFilter;
+#endif
+
 };
 
 #endif  // HP_CUPSFILTER_H

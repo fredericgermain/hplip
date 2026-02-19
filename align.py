@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Naga Samrat Chowdary Narla,
 #
 
 __version__ = '5.0'
@@ -32,14 +32,20 @@ import getopt
 import operator
 import os
 
+
 # Local
 from base.g import *
 from base import device, status, utils, maint, tui, module
 from prnt import cups
 
+try:
+    from importlib import import_module
+except ImportError as e:
+    log.debug(e)
+    from base.utils import dyn_import_mod as import_module
 
 def enterAlignmentNumber(letter, hortvert, colors, line_count, maximum):
-    ok, value = tui.enter_range("Enter the best aligned value for line %s (1-%d): " %
+    ok, value = tui.enter_range("From the printed Alignment page, Enter the best aligned value for line %s (1-%d): " %
                         (letter, maximum),
                         1,
                         maximum)
@@ -100,7 +106,7 @@ def aioUI1():
 def type10and11and14Align(pattern, align_type):
     controls = maint.align10and11and14Controls(pattern, align_type)
     values = []
-    s_controls = controls.keys()
+    s_controls = list(controls.keys())
     s_controls.sort()
 
     for line in s_controls:
@@ -130,7 +136,7 @@ def aioUI2():
 
 try:
     mod = module.Module(__mod__, __title__, __version__, __doc__, None,
-                        (INTERACTIVE_MODE, GUI_MODE), (UI_TOOLKIT_QT4,))
+                        (INTERACTIVE_MODE, GUI_MODE), (UI_TOOLKIT_QT4, UI_TOOLKIT_QT5))
 
     mod.setUsage(module.USAGE_FLAG_DEVICE_ARGS,
                  see_also_list=['hp-clean', 'hp-colorcal', 'hp-linefeedcal',
@@ -142,6 +148,9 @@ try:
     device_uri = mod.getDeviceUri(device_uri, printer_name,
          filter={'align-type': (operator.ne, ALIGN_TYPE_NONE)})
 
+    if not device_uri:
+        sys.exit(1)
+    log.info("Using device : %s\n" % device_uri)
     if mode == GUI_MODE:
         if not utils.canEnterGUIMode4():
             log.error("%s -u/--gui requires Qt4 GUI support. Entering interactive mode." % __mod__)
@@ -150,7 +159,7 @@ try:
     if mode == INTERACTIVE_MODE:
         try:
             d = device.Device(device_uri, printer_name)
-        except Error, e:
+        except Error as e:
             log.error("Unable to open device: %s" % e.msg)
             sys.exit(0)
 
@@ -167,7 +176,7 @@ try:
                 d.close()
 
                 if align_type == ALIGN_TYPE_UNSUPPORTED:
-                    log.error("Alignment through HPLIP not supported for this printer. Please use the printer's front panel to perform cartrdige alignment.")
+                    log.error("Alignment through HPLIP not supported for this printer. Please use the printer's front panel to perform cartridge alignment.")
 
                 elif align_type == ALIGN_TYPE_AUTO:
                     maint.AlignType1PML(d, tui.load_paper_prompt)
@@ -206,6 +215,15 @@ try:
                 elif align_type == ALIGN_TYPE_LIDIL_DJ_D1600:
                     maint.AlignType14(d, tui.load_paper_prompt, type10and11and14Align, invalidPen2)
 
+                elif align_type == ALIGN_TYPE_LEDM:
+                    maint.AlignType15(d, tui.load_paper_prompt, aioUI2)
+
+                elif align_type == ALIGN_TYPE_LEDM_MANUAL:
+                    maint.AlignType16(d, tui.load_paper_prompt, enterAlignmentNumber)
+
+                elif align_type == ALIGN_TYPE_LEDM_FF_CC_0:
+                    maint.AlignType17(d, tui.load_paper_prompt, aioUI2)
+
                 else:
                     log.error("Invalid alignment type.")
 
@@ -216,19 +234,20 @@ try:
             d.close()
 
     else: # GUI_MODE (qt4)
-        try:
-            from PyQt4.QtGui import QApplication
-            from ui4.aligndialog import AlignDialog
-        except ImportError:
-            log.error("Unable to load Qt4 support. Is it installed?")
-            sys.exit(1)
+        # try:
+        #     from PyQt4.QtGui import QApplication
+        #     from ui4.aligndialog import AlignDialog
+        # except ImportError:
+        #     log.error("Unable to load Qt4 support. Is it installed?")
+        #     sys.exit(1)
+        QApplication, ui_package = utils.import_dialog(ui_toolkit)
+        ui = import_module(ui_package + ".aligndialog")
 
 
         #try:
         if 1:
             app = QApplication(sys.argv)
-
-            dlg = AlignDialog(None, device_uri)
+            dlg = ui.AlignDialog(None, device_uri)
             dlg.show()
             try:
                 log.debug("Starting GUI loop...")

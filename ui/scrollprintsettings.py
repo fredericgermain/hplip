@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,18 +16,19 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Yashwant Kumar Sahu
 #
 
 # Local
 from base.g import *
 from base import utils
+from base.sixext import  to_unicode
 from prnt import cups
-from jobstoragemixin import JobStorageMixin
+from .jobstoragemixin import JobStorageMixin
 
 # Qt
 from qt import *
-from scrollview import ScrollView
+from .scrollview import ScrollView
 
 # Std Lib
 import os.path
@@ -39,8 +40,8 @@ class RangeValidator(QValidator):
         QValidator.__init__(self, parent, name)
 
     def validate(self, input, pos):
-        for x in unicode(input)[pos-1:]:
-            if x not in u'0123456789,- ':
+        for x in to_unicode(input)[pos-1:]:
+            if x not in '0123456789,- ':
                 return QValidator.Invalid, pos
 
         return QValidator.Acceptable, pos
@@ -115,7 +116,8 @@ class ScrollPrintSettingsView(ScrollView):
         self.loading = True
         cups.resetOptions()
         cups.openPPD(self.cur_printer)
-
+        cur_outputmode = ""
+                
         #if 1:
         try:
             if 1:
@@ -257,6 +259,11 @@ class ScrollPrintSettingsView(ScrollView):
 
                             choice_data.append((c, choice_text))
 
+                        if o.lower() == 'outputmode':
+                            if value is not None:
+                                cur_outputmode = value
+                            else:
+                                cur_outputmode = defchoice                                
 
                         self.addItem(g, o, option_text, ui, value, choice_data, defchoice, read_only)
 
@@ -506,8 +513,22 @@ class ScrollPrintSettingsView(ScrollView):
 
                 log.debug("  Option: mirror")
                 log.debug("  Current value: %s" % current)
-
-                self.job_storage_avail = self.cur_device.mq['job-storage'] == JOB_STORAGE_ENABLE
+                
+                #Summary
+                    #color input
+                    #quality
+                quality_attr_name = "OutputModeDPI"
+                cur_outputmode_dpi = cups.findPPDAttribute(quality_attr_name, cur_outputmode)
+                if cur_outputmode_dpi is not None:
+                    log.debug("Adding Group: Summary outputmode is : %s" % cur_outputmode)
+                    log.debug("Adding Group: Summary outputmode dpi is : %s" % str (cur_outputmode_dpi))                
+                    self.addGroupHeading("summry", self.__tr("Summary"))
+                    self.addItem("summry", "colorinput", self.__tr('Color Input / Black Render'),
+                        cups.UI_INFO, cur_outputmode_dpi, [], 0)
+                    self.addItem("summry", "quality", self.__tr('Print Quality'),
+                        cups.UI_INFO, cur_outputmode, [], 0)
+                
+                self.job_storage_avail = 0 #self.cur_device.mq['job-storage'] == JOB_STORAGE_ENABLE
 
                 #print current_options
 
@@ -525,9 +546,30 @@ class ScrollPrintSettingsView(ScrollView):
             self.loading = False
             QApplication.restoreOverrideCursor()
 
+    def ComboBox_indexChanged(self, currentItem):
+        sender = self.sender()
+        currentItem = to_unicode(currentItem)
+        # Checking for summary control
+        labelPQValaue = getattr(self, 'PQValueLabel', None)
+        labelPQColorInput = getattr(self, 'PQColorInputLabel', None)
+        # When output mode combo item is changed, we need to update the summary information      
+        if currentItem is not None and sender.option == 'OutputMode' and labelPQValaue is not None and labelPQColorInput is not None:
+            # Setting output mode
+            self.PQValueLabel.setText(currentItem)
+            
+            # Getting DPI custom attributefrom the PPD
+            # Setting color input
+            quality_attr_name = "OutputModeDPI"
+            cups.openPPD(self.cur_printer)
+            outputmode_dpi = cups.findPPDAttribute(quality_attr_name, currentItem)
+            log.debug("Outputmode changed, setting outputmode_dpi: %s" % outputmode_dpi)
+            cups.closePPD()            
+            self.PQColorInputLabel.setText(outputmode_dpi)
+            
+            log.debug("Outputmode changed, setting value outputmode: %s" % currentItem)            
 
     def optionComboBox_activated(self, a):
-        a = unicode(a)
+        a = to_unicode(a)
         sender = self.sender()
         choice = None
 
@@ -594,7 +636,7 @@ class ScrollPrintSettingsView(ScrollView):
                         # determine printoutmode option combo enable state
                         c.setEnabled(True)
                         QToolTip.remove(c)
-                        a = unicode(c.currentText())
+                        a = to_unicode(c.currentText())
 
                         # determine printoutmode default button state
                         link_choice = None
@@ -834,6 +876,7 @@ class ScrollPrintSettingsView(ScrollView):
 
             self.connect(defaultPushButton, SIGNAL("clicked()"), self.defaultPushButton_clicked)
             self.connect(optionComboBox, SIGNAL("activated(const QString&)"), self.optionComboBox_activated)
+            self.connect(optionComboBox, SIGNAL("activated(const QString &)"), self.ComboBox_indexChanged)
 
             control = optionComboBox
 
@@ -989,6 +1032,31 @@ class ScrollPrintSettingsView(ScrollView):
             textLabel1.setText(text)
             defaultPushButton.setText("Default")
 
+        elif typ == cups.UI_INFO:
+            widget = self.getWidget()
+
+            layout1 = QHBoxLayout(widget,5,10,"layout1")
+
+            textPropName = QLabel(widget,"textPropName")
+            layout1.addWidget(textPropName)
+            textPropName.setText(text)            
+
+            spacer1 = QSpacerItem(20,20,QSizePolicy.Expanding,QSizePolicy.Minimum)
+            layout1.addItem(spacer1)
+            
+            if text == 'Print Quality':
+                self.PQValueLabel = QLabel(widget,"textPropValue")
+                layout1.addWidget(self.PQValueLabel)
+                self.PQValueLabel.setText(value)
+            elif text == 'Color Input / Black Render':
+                self.PQColorInputLabel = QLabel(widget,"textPropValue")
+                layout1.addWidget(self.PQColorInputLabel)
+                self.PQColorInputLabel.setText(value)
+            else:
+                textPropValue = QLabel(widget,"textPropValue")
+                layout1.addWidget(textPropValue)
+                textPropValue.setText(value)
+            
         else:
             log.error("Invalid UI value: %s/%s" % (group, option))
 
@@ -1000,4 +1068,3 @@ class ScrollPrintSettingsView(ScrollView):
 
     def __tr(self,s,c = None):
         return qApp.translate("ScrollPrintSettingsView",s,c)
-

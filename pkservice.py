@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 __version__ = '1.0'
 __mod__ = 'hp-pkservice'
 __title__ = 'Policy Kit Service'
-__doc__ = ""
+__doc__ = "Policy Kit Service"
 
 # Std Lib
 import sys
@@ -102,5 +102,5 @@ log.debug("using PolicyKit version %d" % pkit_version)
 
 try:
     BackendService().run(pkit_version)
-except dbus.DBusException, ex:
+except dbus.DBusException as ex:
     log.error("Unable to start service (%s)" % ex)

@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -25,13 +26,13 @@ import os.path
 import gzip
 import re
 import time
-import urllib
 import tempfile
 import glob
 
 # Local
 from base.g import *
-from base import utils, models
+from base import utils, models, os_utils
+from base.sixext import PY3
 
 INVALID_PRINTER_NAME_CHARS = """~`!@#$%^&*()=+[]{}()\\/,.<>?'\";:| """
 
@@ -53,22 +54,9 @@ try:
 
     os.environ['LANG'] = newlang
 
-    # the same works for LC_CTYPE, in case it's not set
-    current_ctype = os.getenv("LC_CTYPE")
-    newctype = "C"
-
-    if current_ctype is not None and current_ctype.count('.'):
-        newctype, encoding = current_ctype.split('.')
-        newctype += ".UTF-8"
-
-    os.environ['LC_CTYPE'] = newctype
-
-    import cupsext
+    cupsext = utils.import_ext('cupsext')
 
     # restore the old env values
-    if current_ctype is not None:
-        os.environ['LC_CTYPE'] = current_ctype
-
     if current_language is not None:
         os.environ['LANG'] = current_language
 
@@ -100,6 +88,7 @@ UI_JOB_STORAGE_USERNAME = 106  # Radios w/text entry
 UI_JOB_STORAGE_ID = 107        # Radios w/text entry
 UI_JOB_STORAGE_ID_EXISTS = 108 # Combo
 
+UI_INFO = 109        # Information field, required Information name and Value
 
 # ipp_op_t
 IPP_PAUSE_PRINTER = 0x0010
@@ -179,11 +168,74 @@ CUPS_ERROR_BAD_NAME = 0x0f00
 CUPS_ERROR_BAD_PARAMETERS = 0x0f01
 
 nickname_pat = re.compile(r'''\*NickName:\s*\"(.*)"''', re.MULTILINE)
-pat_cups_error_log = re.compile("""^loglevel\s?(debug|debug2|warn|info|error|none)""", re.I)
+pat_cups_error_log = re.compile(r"""^loglevel\s?(debug|debug2|warn|info|error|none)""", re.I)
 ppd_pat = re.compile(r'''.*hp-(.*?)(-.*)*\.ppd.*''', re.I)
+ppd_pat1 = re.compile(r'''.*hp-(.*?)(_.*)*\.ppd.*''', re.I)
 
+def getFamilyClassName(model):
+    models_dir = getPPDPath()
+    m = models.ModelData()
+    dict=m.read_all_files(False)
+    family_type = []
+    for m in dict:
+        if model in m:
+          family_type= dict[m]['family-class']
 
+    for f in models.FAMILY_CLASSES:
+        if f in family_type:
+           return f
 
+#************************************************************
+def getPpdName(model):
+    """
+    get ppds from models.dat for postscript printers
+    for pclm printers forming ppd name from model name
+    """
+    
+    m = models.ModelData()
+    
+    dict=m.read_all_files(False)
+    
+    for m in dict:
+        if model in m:
+          #print('dict[m]',dict[m])
+          key = 'ppd-name'
+          
+          if key in dict[m].keys():
+             # postscript name from models.dat is model-ps.ppd so adding .gz string
+             ppd_name= dict[m]['ppd-name'] + ".gz"
+             
+          else:
+             # for pclm forming ppd with model_name.ppd.gz
+             if model.startswith("apollo"):
+                 ppd_name=model+".ppd.gz"
+             elif model.startswith("hp_"):
+                 model1 =model.replace("hp_","hp-")
+                 ppd_name=model1+".ppd.gz"
+             else:
+                 ppd_name="hp-"+model+".ppd.gz"
+        else:
+          #print("Model not present ", model)
+          pass
+    return ppd_name
+           
+#************************************************
+def isfamilydrv(ppds):
+    family_check=0
+    #for f in ppds:
+     #   for m in models.FAMILY_CLASSES:
+      #       if m in f:
+       #          family_check=1
+    filename_config = "/etc/hp/hplip.conf"
+    file_conf = open(filename_config,'r')
+    for line in file_conf:
+        if 'class-driver' in line:
+            count = line.find('=')
+            family_check_str = line[count+1:len(line)-1]
+            if family_check_str == 'yes':
+                family_check = 1
+    return family_check
+                
 def getPPDPath(addtional_paths=None):
     """
         Returns the CUPS ppd path (not the foomatic one under /usr/share/ppd).
@@ -197,20 +249,43 @@ def getPPDPath(addtional_paths=None):
     for path in search_paths:
         ppd_path = os.path.join(path, 'cups/model')
         if os.path.exists(ppd_path):
+            
             return ppd_path
 
+def getPPDPath1(addtional_paths=None):
+    """
+        return path for hplip ppds. 
+    """
+   
+    filename_config = "/etc/hp/hplip.conf"
+    file_conf = open(filename_config,'r')
+    for line in file_conf:
+        if 'ppd=' in line:
+            
+            count = line.find('=')
+            ppd_path = line[count+1:len(line)-1]
+            
+            
+    return ppd_path
+#****************************************
 
 def getAllowableMIMETypes():
     """
-        Scan all /etc/cups/*.convs files for allowable file formats.
+        Scan all /etc/cups/*.convs and /usr/share/cups/mime
+        files for allowable file formats.
     """
-    files = glob.glob("/etc/cups/*.convs")
-
+    paths = []
     allowable_mime_types = []
-
+    files = []
+    if os.path.exists("/etc/cups"):
+        paths.append("/etc/cups/*.convs")
+    if os.path.exists("/usr/share/cups/mime"):
+        paths.append("/usr/share/cups/mime/*.convs")
+    for path in paths:
+        files.extend(glob.glob(path))
     for f in files:
         #log.debug( "Capturing allowable MIME types from: %s" % f )
-        conv_file = file(f, 'r')
+        conv_file = open(f, 'r')
 
         for line in conv_file:
             if not line.startswith("#") and len(line) > 1:
@@ -235,10 +310,10 @@ def getPPDDescription(f):
     if f.endswith('.gz'):
         nickname = gzip.GzipFile(f, 'r').read(4096)
     else:
-        nickname = file(f, 'r').read(4096)
+        nickname = open(f, 'r').read(4096)
 
     try:
-        desc = nickname_pat.search(nickname).group(1)
+        desc = nickname_pat.search(nickname.decode('utf-8')).group(1)
     except AttributeError:
         desc = ''
 
@@ -247,74 +322,76 @@ def getPPDDescription(f):
 
 def getSystemPPDs():
     major, minor, patch = getVersionTuple()
-    ppds = {} # {'ppd name' : 'desc', ...}
-
+    ppds = {}  # {'ppd path': 'desc', ...}
+ 
     if major == 1 and minor < 2:
         ppd_dir = sys_conf.get('dirs', 'ppd')
         log.debug("(CUPS 1.1.x) Searching for PPDs in: %s" % ppd_dir)
-
+ 
         for f in utils.walkFiles(ppd_dir, pattern="HP*ppd*;hp*ppd*", abs_paths=True):
             desc = getPPDDescription(f)
-
-            if not ('foo2' in desc or
-                    'gutenprint' in desc.lower() or
-                    'gutenprint' in f):
-
+            if not ('foo2' in desc or 'gutenprint' in desc.lower() or 'gutenprint' in f):
                 ppds[f] = desc
                 log.debug("%s: %s" % (f, desc))
-
-    else: # 1.2.x
+ 
+    else:  # CUPS 1.2.x or later
         log.debug("(CUPS 1.2.x) Getting list of PPDs using CUPS_GET_PPDS...")
         ppd_dict = cupsext.getPPDList()
-        cups_ppd_path = getPPDPath() # usually /usr/share/cups/model
+        cups_ppd_path = getPPDPath()  # usually /usr/share/cups/model
         foomatic_ppd_path = sys_conf.get('dirs', 'ppdbase', '/usr/share/ppd')
-
+ 
         if not foomatic_ppd_path or not os.path.exists(foomatic_ppd_path):
             foomatic_ppd_path = '/usr/share/ppd'
-
+ 
         log.debug("CUPS PPD base path = %s" % cups_ppd_path)
         log.debug("Foomatic PPD base path = %s" % foomatic_ppd_path)
-
+ 
+        model_ppds = []
+        drv_ppds = []
+ 
         for ppd in ppd_dict:
             if not ppd:
                 continue
-
-            if 'hp-' in ppd.lower() or 'hp_' in ppd.lower() and \
-                ppd_dict[ppd]['ppd-make'] == 'HP':
-
-                desc = ppd_dict[ppd]['ppd-make-and-model']
-
-                if not ('foo2' in desc.lower() or
-                        'gutenprint' in desc.lower() or
-                        'gutenprint' in ppd):
-
-                    # PPD files returned by CUPS_GET_PPDS (and by lpinfo -m)
-                    # can be relative to /usr/share/ppd/ or to
-                    # /usr/share/cups/model/. Not sure why this is.
-                    # Here we will try both and see which one it is...
-
-                    if os.path.exists(ppd):
+ 
+            if ('hp-' in ppd.lower() or 'hp_' in ppd.lower()) and ppd_dict[ppd].get('ppd-make') == 'HP':
+                desc = ppd_dict[ppd].get('ppd-make-and-model', '')
+ 
+                if 'foo2' in desc.lower() or 'gutenprint' in desc.lower() or 'gutenprint' in ppd.lower():
+                    continue
+ 
+                # Determine full path
+                if os.path.exists(ppd):
+                    path = ppd
+                else:
+                    try:
+                        path = os.path.join(foomatic_ppd_path, ppd)
+                    except AttributeError:
                         path = ppd
                     else:
-                        try:
-                            path = os.path.join(foomatic_ppd_path, ppd)
-                        except AttributeError: # happens on some boxes with provider: style ppds (foomatic: etc)
-                            path = ppd
-                        else:
-                            if not os.path.exists(path):
-                                try:
-                                    path = os.path.join(cups_ppd_path, ppd)
-                                except AttributeError:
+                        if not os.path.exists(path):
+                            try:
+                                path = os.path.join(cups_ppd_path, ppd)
+                            except AttributeError:
+                                path = ppd
+                            else:
+                                if not os.path.exists(path):
                                     path = ppd
-                                else:
-                                    if not os.path.exists(path):
-                                        path = ppd # foomatic: or some other driver
-
-                    ppds[path] = desc
-                    #log.debug("%s: %s" % (path, desc))
-
+ 
+                # Separate drv and model ppds
+                if path.startswith("/usr/share/cups/model/hp/"):
+                    model_ppds.append((path, desc))
+                elif path.startswith("drv:///"):
+                    drv_ppds.append((path, desc))
+                else:
+                    model_ppds.append((path, desc))  # include other non-drv entries
+ 
+        selected_ppds = model_ppds if model_ppds else drv_ppds
+ 
+        for path, desc in selected_ppds:
+            ppds[path] = desc
+            log.debug("%s: %s" % (path, desc))
+ 
     return ppds
-
 
 ## TODO: Move this to CUPSEXT for better performance
 def levenshtein_distance(a,b):
@@ -327,7 +404,7 @@ def levenshtein_distance(a,b):
         a,b = b,a
         n,m = m,n
 
-    current = range(n+1)
+    current = list(range(n+1))
     for i in range(1,m+1):
         previous, current = current, [i]+[0]*m
 
@@ -347,11 +424,11 @@ number_pat = re.compile(r""".*?(\d+)""", re.IGNORECASE)
 
 STRIP_STRINGS2 = ['foomatic:', 'hp-', 'hp_', 'hp ', '.gz', '.ppd',
                   'drv:', '-pcl', '-pcl3', '-jetready',
-                 '-zxs', '-zjs', '-ps', '-postscript',
+                 '-zxs', '-zjs', '-ps', '-postscript', '-pdf',
                  '-jr', '-lidl', '-lidil', '-ldl', '-hpijs']
 
 
-for p in models.TECH_CLASS_PDLS.values():
+for p in list(models.TECH_CLASS_PDLS.values()):
     pp = '-%s' % p
     if pp not in STRIP_STRINGS2:
         STRIP_STRINGS2.append(pp)
@@ -386,7 +463,7 @@ def getPPDFile(stripped_model, ppds): # Old PPD find
     log.debug("1st stage edit distance match")
     mins = {}
     eds = {}
-    min_edit_distance = sys.maxint
+    min_edit_distance = sys.maxsize
 
     log.debug("Determining edit distance from %s (only showing edit distances < 4)..." % stripped_model)
     for f in ppds:
@@ -456,33 +533,66 @@ def getPPDFile(stripped_model, ppds): # Old PPD find
     return mins
 
 
-def getPPDFile2(stripped_model, ppds): # New PPD find
+def getPPDFile2(mq,model, ppds): # New PPD find
     # This routine is for the new PPD naming scheme begun in 2.8.10
     # and beginning with implementation in 2.8.12 (Qt4 hp-setup)
     # hp-<model name from models.dat w/o beginning hp_>[-<pdl>][-<pdl>][...].ppd[.gz]
     # 3.9.6: Added handling for hpijs vs. hpcups PPDs/DRVs
-    log.debug("Matching PPD list to model %s..." % stripped_model)
+
+
+    #Check if common ppd name is already given in models.dat(This is needed because in case of devices having more than one derivatives
+    #will have diffrent model name strings in device ID, because of which we don't get the common ppd name for search)
+    family_check=isfamilydrv(ppds)
+    family_class=getFamilyClassName(model)
+    model = models.normalizeModelName(model)
+    if family_check==0:
+       ppd_name = mq.get('ppd-name',0)
+    else:
+       ppd_name = mq.get('family-ppd',0)
+
+    if ppd_name == 0:
+        stripped_model = stripModel2(model)
+    else:
+        stripped_model = stripModel2(ppd_name)
+
+    log.debug("Matching PPD list to model  %s..." % stripped_model)
+
     matches = []
-    for f in ppds:
-        match = ppd_pat.match(f)
-        if match is not None:
-            if match.group(1) == stripped_model:
-                log.debug("Found match: %s" % f)
-                try:
-                    pdls = match.group(2).split('-')
-                except AttributeError:
-                    pdls = []
-
-                if (prop.hpcups_build and 'hpijs' not in f) or \
-                    ((prop.hpijs_build and 'hpijs' in pdls) or (prop.hpcups_build and 'hpijs' not in pdls)):
-                    matches.append((f, [p for p in pdls if p and p != 'hpijs']))
-
+    if family_check ==0 :
+        for f in ppds:
+            match = ppd_pat.match(f)
+            if match is not None:  
+                if match.group(1) == stripped_model:
+                    log.debug("Found match: %s" % f)
+                    try:
+                       pdls = match.group(2).split('-')
+                    except AttributeError:
+                         pdls = []
+                    if (prop.hpcups_build and 'hpijs' not in f) or \
+                        ((prop.hpijs_build and 'hpijs' in pdls) or (prop.hpcups_build and 'hpijs' not in pdls)) or \
+                         ('ps' in pdls) or ('pdf' in pdls):
+                          matches.append((f, [p for p in pdls if p and p != 'hpijs']))  
+    else:
+        for f in ppds:
+            match = ppd_pat1.match(f)
+            if match is not None: 
+                if match.group(1) == family_class:
+                    log.debug("Found match: %s" % f)
+                    try:
+                       pdls = match.group(2).split('-')
+                    except AttributeError:
+                         pdls = []
+                    if (prop.hpcups_build and 'hpijs' not in f) or \
+                        ((prop.hpijs_build and 'hpijs' in pdls) or (prop.hpcups_build and 'hpijs' not in pdls)) or \
+                         ('ps' in pdls) or ('pdf' in pdls):
+                          matches.append((f, [p for p in pdls if p and p != 'hpijs']))    
     log.debug(matches)
     num_matches = len(matches)
 
     if num_matches == 0:
-        log.warn("No PPD found for model %s using new algorithm. Trying old algorithm..." % stripped_model)
-        matches2 = getPPDFile(stripModel(stripped_model), ppds).items()
+        log.debug("No PPD found for model %s using new algorithm. Trying old algorithm..." % stripped_model)
+        #Using Old algo, ignores the series keyword in ppd searching.
+        matches2 = list(getPPDFile(stripModel(stripped_model), ppds).items())
         log.debug(matches2)
         num_matches2 = len(matches2)
         if num_matches2:
@@ -496,7 +606,8 @@ def getPPDFile2(stripped_model, ppds): # New PPD find
                         pdls = []
 
                     if (prop.hpcups_build and 'hpijs' not in f) or \
-                       ((prop.hpijs_build and 'hpijs' in pdls) or (prop.hpcups_build and 'hpijs' not in pdls)):
+                       ((prop.hpijs_build and 'hpijs' in pdls) or (prop.hpcups_build and 'hpijs' not in pdls)) or \
+                       ('ps' in pdls) or ('pdf' in pdls):
                         matches.append((f, [p for p in pdls if p and p != 'hpijs']))
 
         log.debug(matches)
@@ -511,8 +622,8 @@ def getPPDFile2(stripped_model, ppds): # New PPD find
         return (matches[0][0], '')
 
     # > 1
-    log.debug("%d matches found. Selecting based on PDL: Host > PS > PCL/Other" % num_matches)
-    for p in [models.PDL_TYPE_HOST, models.PDL_TYPE_PS, models.PDL_TYPE_PCL]:
+    log.debug("%d matches found. Searching based on PDL: Host > PS,PDF > PCL/Other" % num_matches)
+    for p in [models.PDL_TYPE_HOST, models.PDL_TYPE_PS,models.PDL_TYPE_PDF, models.PDL_TYPE_PCL]:
         for f, pdl_list in matches:
             for x in pdl_list:
                 # default to HOST-based PDLs, as newly supported PDLs will most likely be of this type
@@ -520,16 +631,87 @@ def getPPDFile2(stripped_model, ppds): # New PPD find
                     log.debug("Selecting '-%s' PPD: %s" % (x, f))
                     return (f, '')
 
-    # No specific PDL found, so just return 1st found PPD file
+    log.debug("%d matches found. Searching based on Filters: HPCUPS > HPIJS" % num_matches)
+    for p in ["hpcups","hpijs"]:
+        for f, pdl_list in matches:
+            if p in f:
+                log.debug("Selecting PPD: %s" % (f))
+                return (f, '')
+
+    # No specific PDL or Filter found, so just return 1st found PPD file
     log.debug("No specific PDL located. Defaulting to first found PPD file.")
     return (matches[0][0], '')
+
+##
+# Function :- getFaxPPDFile()
+# Arguments:-
+#   1) mq  -->  Device model query object
+#    2) model --> Fax model name
+# Return arguments:-
+#   1) fax_ppd --> Found Fax ppd file. (Returns None if not found)
+#   2) expt_fax_ppd_name  -> Expected Fax PPD name
+#   3) nick --> Expected Fax PPD description
+#
+def getFaxPPDFile(mq, model):
+    try:
+        fax_ppd = None
+        nick = "HP Fax hpcups"
+        expected_fax_ppd_name = "HP-Fax-hpcups"
+        log.debug("Searching for fax PPD for model %s  hpcups_build =%d" % (model,prop.hpcups_build))
+        if prop.hpcups_build:
+            faxType = mq.get('fax-type', FAX_TYPE_NONE)
+            if faxType == FAX_TYPE_MARVELL:
+                expected_fax_ppd_name = "HP-Fax3-hpcups" # Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax3 hpcups"
+            elif faxType == FAX_TYPE_SOAP or faxType == FAX_TYPE_LEDMSOAP:
+                expected_fax_ppd_name = "HP-Fax2-hpcups" # Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax2 hpcups"
+            elif faxType == FAX_TYPE_LEDM:
+                expected_fax_ppd_name = "HP-Fax4-hpcups"# Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax4 hpcups"
+            elif faxType == FAX_TYPE_CDM:
+                expected_fax_ppd_name = "HP-Fax-CDM-hpcups"# Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax CDM hpcups"                    
+            else:
+                expected_fax_ppd_name = "HP-Fax-hpcups" # Standard
+                nick = "HP Fax hpcups"
+
+        else: # hpijs
+            if mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_MARVELL:
+                expected_fax_ppd_name = "HP-Fax3-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax3 hpijs"
+            if mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_SOAP or mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_LEDMSOAP:
+                expected_fax_ppd_name = "HP-Fax2-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax2 hpijs"
+            if mq.get('fax-type', FAX_TYPE_NONE) == FAX_TYPE_LEDM:
+                expected_fax_ppd_name = "HP-Fax4-hpijs" # Fixed width (2528 pixels) and 300dpi rendering
+                nick = "HP Fax4 hpijs"
+            else:
+                expected_fax_ppd_name = "HP-Fax-hpijs" # Standard
+                nick = "HP Fax hpijs"
+
+        ppds = []
+        for f in utils.walkFiles(sys_conf.get('dirs', 'ppd'), pattern="HP-Fax*.ppd*", abs_paths=True):
+            ppds.append(f)
+        log.debug("ppds=%s"%ppds)
+        for f in ppds:
+            if f.find(expected_fax_ppd_name) >= 0 and getPPDDescription(f) == nick:
+                fax_ppd = f
+                log.debug("Found fax PPD: %s" % f)
+                break
+        else:
+            log.error("Unable to locate the HPLIP Fax PPD file: %s.ppd.gz file."%expected_fax_ppd_name)
+
+    finally:
+        return fax_ppd,expected_fax_ppd_name, nick
+
 
 
 
 def getErrorLogLevel():
     cups_conf = '/etc/cups/cupsd.conf'
     try:
-        f = file(cups_conf, 'r')
+        f = open(cups_conf, 'r')
     except OSError:
         log.error("%s not found." % cups_conf)
     except IOError:
@@ -555,13 +737,13 @@ def getPrintJobErrorLog(job_id, max_lines=1000, cont_interval=5):
     #if level in ('debug', 'debug2'):
     if 1:
         try:
-            f = file(cups_conf, 'r')
+            f = open(cups_conf, 'r')
         except (IOError, OSError):
             log.error("Could not open the CUPS error_log file: %s" % cups_conf)
             return ''
 
         else:
-            if s in file(cups_conf, 'r').read():
+            if s in open(cups_conf, 'r').read():
                 queue = utils.Queue()
                 job_found = False
 
@@ -600,27 +782,29 @@ def getDefaultPrinter():
     return r
 
 def setDefaultPrinter(printer_name):
-    setPasswordPrompt("You do not have permission to set the default printer.")
+    if PY3:
+       printer_name = str(printer_name, "utf-8")
+    setPasswordPrompt("You do not have permission to set the default printer. You need authentication.")
     return cupsext.setDefaultPrinter(printer_name)
 
 def accept(printer_name):
-    setPasswordPrompt("You do not have permission to accept jobs on a printer queue.")
+    setPasswordPrompt("You do not have permission to accept jobs on a printer queue. You need authentication.")
     return controlPrinter(printer_name, CUPS_ACCEPT_JOBS)
 
 def reject(printer_name):
-    setPasswordPrompt("You do not have permission to reject jobs on a printer queue.")
+    setPasswordPrompt("You do not have permission to reject jobs on a printer queue. You need authentication.")
     return controlPrinter(printer_name, CUPS_REJECT_JOBS)
 
 def start(printer_name):
-    setPasswordPrompt("You do not have permission to start a printer queue.")
+    setPasswordPrompt("You do not have permission to start a printer queue. You need authentication.")
     return controlPrinter(printer_name, IPP_RESUME_PRINTER)
 
 def stop(printer_name):
-    setPasswordPrompt("You do not have permission to stop a printer queue.")
+    setPasswordPrompt("You do not have permission to stop a printer queue. You need authentication.")
     return controlPrinter(printer_name, IPP_PAUSE_PRINTER)
 
 def purge(printer_name):
-    setPasswordPrompt("You do not have permission to purge jobs.")
+    setPasswordPrompt("You do not have permission to purge jobs. You need authentication.")
     return controlPrinter(printer_name, IPP_PURGE_JOBS)
 
 def controlPrinter(printer_name, cups_op):
@@ -681,7 +865,7 @@ def getServer():
     return cupsext.getServer()
 
 def cancelJob(jobid, dest=None):
-    setPasswordPrompt("You do not have permission to cancel a job.")
+    setPasswordPrompt("You do not have permission to cancel a job. You need authentication.")
     if dest is not None:
         return cupsext.cancelJob(dest, jobid)
     else:
@@ -701,13 +885,23 @@ def addOption(option):
 def getOptions():
     return cupsext.getOptions()
 
+def duplicateSection(section):
+    return cupsext.duplicateSection(section)
+
 def printFile(printer, filename, title):
     if os.path.exists(filename):
+        if not PY3:
+            printer = printer.encode('utf-8')
+            filename = filename.encode('utf-8')
+            title = title.encode('utf-8')
+
         return cupsext.printFileWithOptions(printer, filename, title)
+
     else:
         return -1
 
 def addPrinter(printer_name, device_uri, location, ppd_file, model, info):
+    setPasswordPrompt("You do not have permission to add a printer. You need authentication.")
     log.debug("addPrinter('%s', '%s', '%s', '%s', '%s', '%s')" %
         ( printer_name, device_uri, location, ppd_file, model, info))
 
@@ -718,8 +912,14 @@ def addPrinter(printer_name, device_uri, location, ppd_file, model, info):
     return cupsext.addPrinter(printer_name, device_uri, location, ppd_file, model, info)
 
 def delPrinter(printer_name):
-    setPasswordPrompt("You do not have permission to delete a printer.")
+    setPasswordPrompt("You do not have permission to delete a printer. You need authentication.")
     return cupsext.delPrinter(printer_name)
+
+def enablePrinter(printer_name):
+    setPasswordPrompt("You do not have permission to enable a printer. You need authentication.")
+    cmd_full_path = utils.which('cupsenable', True)
+    cmd= "%s %s" % (cmd_full_path, printer_name)
+    return os_utils.execute(cmd)
 
 def getGroupList():
     return cupsext.getGroupList()
@@ -750,3 +950,30 @@ def setPasswordCallback(func):
 
 def setPasswordPrompt(prompt):
     return cupsext.setPasswordPrompt(prompt)
+
+def findPPDAttribute(name, spec):
+    return cupsext.findPPDAttribute(name, spec)
+
+def releaseCupsInstance():
+    return cupsext.releaseCupsInstance()
+
+
+def cups_operation(operation_func, mode, ui_toolkit, ui_obj, *cups_op_args):
+    cnt = 0
+    while cnt < 3:
+        cnt += 1
+        result, status_str = operation_func(*cups_op_args)
+        if result != IPP_FORBIDDEN:
+            break
+        else:
+            releaseCupsInstance()
+            if cnt < 3:
+                if mode == INTERACTIVE_MODE:
+                    log.error("Could not connect to CUPS Server due to insufficient privileges.Try with valid user")
+                elif ui_toolkit == 'qt3':
+                    ui_obj.FailureUI("<b>Could not connect to CUPS Server due to insufficient privileges.</b><p>Try with valid user")
+                else:
+                    from ui4 import ui_utils
+                    ui_utils.FailureUI(ui_obj, "<b>Could not connect to CUPS Server due to insufficient privileges.</b><p>Try with valid user")
+
+    return result, status_str

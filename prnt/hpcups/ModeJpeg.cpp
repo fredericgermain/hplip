@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ModeJpeg.cpp : Jpeg compressor implementation
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -33,6 +33,7 @@
 #include "ModeJpeg.h"
 #include <dlfcn.h>
 #include "Utils.h"
+#include "utils.h"
 
 #define MAX_JPEG_FILE_SIZE 2097152    // 2 Mgabytes
 
@@ -104,14 +105,14 @@ DRIVER_ERROR ModeJpeg::Init(int color_mode, int band_height, COMPRESS_MODE *eCom
     m_eCompressor = COMPRESSOR_JPEG_JETREADY;
     if (*eCompressMode == COMPRESS_MODE_LJ)
     {
-        m_hHPLibHandle = LoadPlugin ("lj.so");
+        m_hHPLibHandle = load_plugin_library(UTILS_PRINT_PLUGIN_LIBRARY, PRNT_PLUGIN_LJ);
         if (m_hHPLibHandle)
         {
             dlerror ();
-            *(void **) (&HPLJJRCompress) = dlsym (m_hHPLibHandle, "HPJetReadyCompress");
+            *(void **) (&HPLJJRCompress) = get_library_symbol(m_hHPLibHandle, "HPJetReadyCompress");
             if (HPLJJRCompress == NULL)
             {
-                dlclose(m_hHPLibHandle);
+                unload_library(m_hHPLibHandle);
                 m_hHPLibHandle = NULL;
                 *eCompressMode = COMPRESS_MODE_JPEG;
             }
@@ -126,10 +127,7 @@ DRIVER_ERROR ModeJpeg::Init(int color_mode, int band_height, COMPRESS_MODE *eCom
 
 ModeJpeg::~ModeJpeg()
 {
-    if (m_hHPLibHandle)
-    {
-        dlclose(m_hHPLibHandle);
-    }
+    unload_library(m_hHPLibHandle);
     if (m_pbyInputBuffer)
     {
         delete [] m_pbyInputBuffer;
@@ -154,7 +152,7 @@ void ModeJpeg::rgbToGray(BYTE *rgbData, int iNumBytes)
         {
             *p++ = RGBTOGRAY(rgbData);
             *p++ = 0;
-            *p++ - 0;
+            *p++ = 0;
         }
         return;
     }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -31,7 +31,7 @@ import time
 # Local
 from base.g import *
 from base import device, utils
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 try:
@@ -70,7 +70,8 @@ TrayIcon_Critical = 1
 TrayIcon_Information = 2
 
 theBalloonTip = None
-
+UPGRADE_CHECK_DELAY=24*60*60*1000               #1 day
+CLEAN_EXEC_DELAY=4*60*60*1000                  #4 Hrs
 
 class BalloonTip(QDialog):
     def __init__(self, msg_icon, title, msg, tray_icon):
@@ -258,7 +259,7 @@ class SystrayIcon(QLabel):
             managerWin = self.locateTray(dpy)
             if managerWin: break
             x += 1
-            if x > 10: break
+            if x > 30: break
             time.sleep(2.0)
 
 
@@ -279,7 +280,7 @@ class SystrayIcon(QLabel):
 
         if managerWin != 0:
             # set StructureNotifyMask (1L << 17)
-            XSelectInput(dpy, managerWin, 1L << 17)
+            XSelectInput(dpy, managerWin, 1 << 17)
 
         #XUngrabServer(dpy)
         XFlush(dpy)
@@ -392,6 +393,10 @@ class SystemTrayApp(QApplication):
         self.read_pipe = read_pipe
         self.fmt = "80s80sI32sI80sf"
         self.fmt_size = struct.calcsize(self.fmt)
+        
+        self.user_settings = utils.UserSettings()
+        self.user_settings.load()
+        self.user_settings.debug()
 
         self.tray_icon = SystrayIcon(load_pixmap("hp_logo", "32x32", (22, 22)))
         self.menu = QPopupMenu()
@@ -423,6 +428,20 @@ class SystemTrayApp(QApplication):
         self.icon_info = load_pixmap('info', '16x16')
         self.icon_warn = load_pixmap('warning', '16x16')
         self.icon_error = load_pixmap('error', '16x16')
+        
+        if "--ignore-update-firsttime" not in args:
+            self.handle_hplip_updation()
+        self.timer = QTimer()
+        self.timer.connect(self.timer,SIGNAL("timeout()"),self.handle_hplip_updation)
+        self.timer.start(UPGRADE_CHECK_DELAY)
+
+        # Cleans the /var/log/hp/tmp directory
+        #self.handle_hplip_clean()
+        
+        #self.clean_timer = QTimer()
+        #self.clean_timer.connect(self.clean_timer,SIGNAL("timeout()"),self.handle_hplip_clean)
+        #self.clean_timer.start(CLEAN_EXEC_DELAY)
+
 
         self.ERROR_STATE_TO_ICON = {
             ERROR_STATE_CLEAR: self.icon_info,
@@ -518,6 +537,51 @@ class SystemTrayApp(QApplication):
 
             else:
                 break
+
+
+    def handle_hplip_clean(self):
+        log.debug("handle_hplip_clean ")
+        home_dir = sys_conf.get('dirs', 'home')
+        cmd = 'sh %s/hplip_clean.sh'%home_dir
+        os.system(cmd)
+
+
+    def handle_hplip_updation(self):
+        log.debug("handle_hplip_updation upgrade_notify =%d"%(self.user_settings.upgrade_notify))
+        path = utils.which('hp-upgrade')
+        if self.user_settings.upgrade_notify is False:
+            log.debug("upgrade notification is disabled in systray ")
+            if path:
+                path = os.path.join(path, 'hp-upgrade')
+                log.debug("Running hp-upgrade: %s " % (path))
+                # this just updates the available version in conf file. But won't notify
+                os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--check')
+                time.sleep(5)
+                try:
+                    os.waitpid(0, os.WNOHANG)
+                except OSError:
+                    pass
+            return
+
+
+        current_time = time.time()
+
+        if int(current_time) > self.user_settings.upgrade_pending_update_time:
+            path = utils.which('hp-upgrade')
+            if path:
+                path = os.path.join(path, 'hp-upgrade')
+                log.debug("Running hp-upgrade: %s " % (path))
+                os.spawnlp(os.P_NOWAIT, path, 'hp-upgrade', '--notify')
+                time.sleep(5)
+            else:
+                log.error("Unable to find hp-upgrade --notify on PATH.")
+        else:
+            log.debug("upgrade schedule time is not yet completed. schedule time =%d current time =%d " %(self.user_settings.upgrade_pending_update_time, current_time))
+        try:
+            os.waitpid(0, os.WNOHANG)
+        except OSError:
+            pass
+
 
 
     def __tr(self,s,c = None):

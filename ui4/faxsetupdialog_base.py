@@ -9,6 +9,8 @@
 
 from PyQt4 import QtCore, QtGui
 
+
+
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
@@ -81,6 +83,9 @@ class Ui_Dialog(object):
         self.CancelButton = QtGui.QPushButton(Dialog)
         self.CancelButton.setObjectName("CancelButton")
         self.gridlayout.addWidget(self.CancelButton, 4, 2, 1, 1)
+        self.SaveBtn = QtGui.QPushButton(Dialog)
+        self.SaveBtn.setObjectName("SaveBtn")
+        self.gridlayout.addWidget(self.SaveBtn, 4, 1, 1, 1)        
 
         self.retranslateUi(Dialog)
         self.tabWidget.setCurrentIndex(1)
@@ -99,4 +104,4 @@ class Ui_Dialog(object):
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_2), QtGui.QApplication.translate("Dialog", "Coverpage", None, QtGui.QApplication.UnicodeUTF8))
         self.CancelButton.setText(QtGui.QApplication.translate("Dialog", "Close", None, QtGui.QApplication.UnicodeUTF8))
 
-from deviceuricombobox import DeviceUriComboBox
+from .deviceuricombobox import DeviceUriComboBox

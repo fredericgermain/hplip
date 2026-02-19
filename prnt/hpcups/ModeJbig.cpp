@@ -1,7 +1,7 @@
 /*****************************************************************************\
   ModeJbig.cpp : Implementation for the ModeJbig class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -26,6 +26,8 @@
   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
   THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+  Author: Naga Samrat Chowdary Narla,
 \*****************************************************************************/
 
 #include "CommonDefinitions.h"
@@ -35,6 +37,7 @@
 #include "hpjbig_wrapper.h"
 #include <dlfcn.h>
 #include "Utils.h"
+#include "utils.h"
 
 extern "C"
 {
@@ -97,6 +100,8 @@ const BYTE ModeJbig::szByte2[256] =
 
 ModeJbig::ModeJbig (unsigned int RasterSize) : Compressor (RasterSize, false)
 {
+    m_hHPLibHandle = 0;
+    m_pszInputRasterData = 0;
     m_iWidth = ((RasterSize + 31) / 32) * 4;
     m_iPlaneNumber  = 0;
     m_iCurrentPlane = 0;
@@ -111,10 +116,8 @@ ModeJbig::ModeJbig (unsigned int RasterSize) : Compressor (RasterSize, false)
 
 ModeJbig::~ModeJbig()
 {
-    if (m_hHPLibHandle)
-    {
-        dlclose(m_hHPLibHandle);
-    }
+    unload_library(m_hHPLibHandle);
+
     if (m_pszInputRasterData)
     {
         delete [] m_pszInputRasterData;
@@ -129,16 +132,16 @@ DRIVER_ERROR ModeJbig::Init(int iLastRaster, int iPlanes, int iBPP, ZJPLATFORM z
     m_iBPP         = iBPP;
     m_ezj_platform = zj_platform;
 
-    m_hHPLibHandle = LoadPlugin ("lj.so");
+    m_hHPLibHandle = load_plugin_library(UTILS_PRINT_PLUGIN_LIBRARY, PRNT_PLUGIN_LJ);
     if (m_hHPLibHandle)
     {
         dlerror ();
-        *(void **) (&HPLJJBGCompress) = dlsym (m_hHPLibHandle, "hp_encode_bits_to_jbig");
-        *(void **) (&HPLJSoInit) = dlsym (m_hHPLibHandle, "hp_init_lib");
-        if (!HPLJSoInit || (HPLJSoInit && !HPLJSoInit (1)))
-        {
-            return PLUGIN_LIBRARY_MISSING;
-        }
+        *(void **) (&HPLJJBGCompress) = get_library_symbol(m_hHPLibHandle, "hp_encode_bits_to_jbig");
+        *(void **) (&HPLJSoInit) = get_library_symbol(m_hHPLibHandle, "hp_init_lib");
+        //if (!HPLJSoInit || (HPLJSoInit && !HPLJSoInit (1)))
+        //{
+        //    return PLUGIN_LIBRARY_MISSING;
+        //}
     }
     else
     {
@@ -151,6 +154,11 @@ DRIVER_ERROR ModeJbig::Init(int iLastRaster, int iPlanes, int iBPP, ZJPLATFORM z
         m_iP[1] = 0;
         m_iP[2] = 1;
         m_iP[3] = 2;
+        if(zj_platform == ZJCOLOR2)
+        {
+          m_iP[1] = 2;
+          m_iP[3] = 0;
+        } 
     }
 
     int    buffer_size = m_iWidth * m_iLastRaster * m_iPlanes * m_iBPP;
@@ -202,6 +210,7 @@ bool ModeJbig::Process (RASTERDATA* input)
             bResult = processZXStream(input);
             break;
         case ZJCOLOR:
+        case ZJCOLOR2:
             if (m_iPlanes == 1)
             {
                 bResult = processZXStream(input);

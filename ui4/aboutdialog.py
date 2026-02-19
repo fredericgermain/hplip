@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,14 +23,14 @@
 # Local
 from base.g import *
 #from base import device, utils
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from aboutdialog_base import Ui_AboutDlg_base
+from .aboutdialog_base import Ui_AboutDlg_base
 
 
 class AboutDialog(QDialog, Ui_AboutDlg_base):

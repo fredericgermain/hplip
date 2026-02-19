@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,25 +22,27 @@
 # StdLib
 import operator
 import struct
-import Queue
+from base.sixext.moves import queue
+from base.sixext import to_unicode
+import signal
 
 # Local
 from base.g import *
 from base import device, utils, pml
 from prnt import cups
 from base.codes import *
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from sendfaxdialog_base import Ui_Dialog
-from filetable import FileTable, FILETABLE_TYPE_FAX
-from printernamecombobox import PrinterNameComboBox, PRINTERNAMECOMBOBOX_TYPE_FAX_ONLY
-from printsettingsdialog import PrintSettingsDialog
-from faxsetupdialog import FaxSetupDialog
+from .sendfaxdialog_base import Ui_Dialog
+from .filetable import FileTable, FILETABLE_TYPE_FAX
+from .printernamecombobox import PrinterNameComboBox, PRINTERNAMECOMBOBOX_TYPE_FAX_ONLY
+from .printsettingsdialog import PrintSettingsDialog
+from .faxsetupdialog import FaxSetupDialog
 
 
 PAGE_SELECT_FAX = 0
@@ -67,19 +69,15 @@ if fax_enabled:
         fax_enabled = False
 
 if not fax_enabled:
-    log.error("Fax disabled.")
+    log.warn("Fax disabled.")
 
 coverpages_enabled = False
 if fax_enabled:
     try:
         import reportlab
-        ver = reportlab.Version
-        try:
-            ver_f = float(ver)
-        except ValueError:
-            ver_f = 0.0
+        ver = str(reportlab.Version)
 
-        if ver_f >= 2.0:
+        if ver >= "2.0":
             coverpages_enabled = True
         else:
             log.warn("Pre-2.0 version of Reportlab installed. Fax coverpages disabled.")
@@ -91,7 +89,7 @@ if not coverpages_enabled:
     log.warn("Please install version 2.0+ of Reportlab for coverpage support.")
 
 if fax_enabled:
-    from fabwindow import FABWindow
+    from .fabwindow import FABWindow
 
 if coverpages_enabled:
     from fax import coverpages
@@ -135,6 +133,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         self.connect(self.CancelButton, SIGNAL("clicked()"), self.CancelButton_clicked)
         self.connect(self.BackButton, SIGNAL("clicked()"), self.BackButton_clicked)
         self.connect(self.NextButton, SIGNAL("clicked()"), self.NextButton_clicked)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         self.initSelectFaxPage()
         self.initCoverpagePage()
@@ -229,7 +228,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         self.NextCoverPageButton.setIcon(QIcon(load_pixmap("next", "16x16")))
 
         if coverpages_enabled:
-            self.cover_page_list = coverpages.COVERPAGES.keys()
+            self.cover_page_list = list(coverpages.COVERPAGES.keys())
             self.cover_page_index = self.cover_page_list.index("basic")
             self.cover_page_max = len(self.cover_page_list)-1
             self.cover_page_name = self.cover_page_list[self.cover_page_index]
@@ -257,11 +256,11 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def MessageEdit_textChanged(self):
-        self.cover_page_message = unicode(self.MessageEdit.toPlainText())
+        self.cover_page_message = to_unicode(self.MessageEdit.toPlainText())
 
 
     def RegardingEdit_textChanged(self, t):
-        self.cover_page_re = unicode(t)
+        self.cover_page_re = to_unicode(t)
 
 
     def PreserveFormattingCheckBox_toggled(self, b):
@@ -287,10 +286,11 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def displayCoverpagePreview(self):
-        self.cover_page_name = self.cover_page_list[self.cover_page_index]
-        self.cover_page_func = coverpages.COVERPAGES[self.cover_page_name][0]
-        self.CoverPageName.setText(QString('<i>"%1"</i>').arg(self.cover_page_name))
-        self.CoverPagePreview.setPixmap(load_pixmap(coverpages.COVERPAGES[self.cover_page_name][1], 'other'))
+        if coverpages_enabled:
+            self.cover_page_name = self.cover_page_list[self.cover_page_index]
+            self.cover_page_func = coverpages.COVERPAGES[self.cover_page_name][0]
+            self.CoverPageName.setText(QString('<i>"%s"</i>'%self.cover_page_name))
+            self.CoverPagePreview.setPixmap(load_pixmap(coverpages.COVERPAGES[self.cover_page_name][1], 'other'))
 
         if self.CoverPageGroupBox.isChecked():
             self.addCoverPage()
@@ -315,7 +315,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
     def addCoverPage(self):
         self.removeCoverPage()
         self.FilesTable.addFile(self.cover_page_name, MIME_TYPE_COVERPAGE,
-                                self.__tr('HP Fax Coverpage: "%1"').arg(self.cover_page_name),
+                                self.__tr('HP Fax Coverpage: "%s"'%self.cover_page_name),
                                 self.__tr("Cover Page"), 1)
 
 
@@ -355,7 +355,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         self.restoreNextButton()
         self.NextButton.setEnabled(self.FilesTable.isNotEmpty())
         self.BackButton.setEnabled(coverpages_enabled)
-        self.FilesPageNote.setText(self.__tr("Note: You may also add files to the fax by printing from any application to the '%1' fax printer.").arg(self.printer_name))
+        self.FilesPageNote.setText(self.__tr("Note: You may also add files to the fax by printing from any application to the '%s' fax printer."%self.printer_name))
         self.displayPage(PAGE_FILES)
 
 
@@ -435,7 +435,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         elif action == FAB_NAME_REMOVE:
             log.debug("Fax address book has changed: '%s' removed" % s1)
             all_names = self.db.get_all_names()
-            self.recipient_list = filter(lambda x: x in self.recipient_list, all_names)
+            self.recipient_list = [x for x in all_names if x in self.recipient_list]
             self.updateAddressBook()
             self.updateRecipientTable()
 
@@ -587,18 +587,18 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def QuickAddFaxEdit_textChanged(self, fax):
-        self.enableQuickAddButton(None, unicode(fax))
+        self.enableQuickAddButton(None, to_unicode(fax))
 
 
     def QuickAddNameEdit_textChanged(self, name):
-        self.enableQuickAddButton(unicode(name))
+        self.enableQuickAddButton(to_unicode(name))
 
 
     def enableQuickAddButton(self, name=None, fax=None):
         if name is None:
-            name = unicode(self.QuickAddNameEdit.text())
+            name = to_unicode(self.QuickAddNameEdit.text())
         if fax is None:
-            fax = unicode(self.QuickAddFaxEdit.text())
+            fax = to_unicode(self.QuickAddFaxEdit.text())
 
         existing_name = False
         if name:
@@ -622,8 +622,8 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def QuickAddButton_clicked(self):
-        name = unicode(self.QuickAddNameEdit.text())
-        fax = unicode(self.QuickAddFaxEdit.text())
+        name = to_unicode(self.QuickAddNameEdit.text())
+        fax = to_unicode(self.QuickAddFaxEdit.text())
         self.fab.addName(name, fax)
         self.addRecipient(name)
         self.updateRecipientTable()
@@ -633,11 +633,11 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def AddIndividualButton_clicked(self):
-        self.addRecipient(unicode(self.AddIndividualComboBox.currentText()))
+        self.addRecipient(to_unicode(self.AddIndividualComboBox.currentText()))
 
 
     def AddGroupButton_clicked(self):
-        self.addGroup(unicode(self.AddGroupComboBox.currentText()))
+        self.addGroup(to_unicode(self.AddGroupComboBox.currentText()))
 
 
     def RemoveRecipientButton_clicked(self):
@@ -664,9 +664,9 @@ class SendFaxDialog(QDialog, Ui_Dialog):
     def getCurrentRecipient(self):
         item = self.RecipientsTable.item(self.RecipientsTable.currentRow(), 0)
         if item is not None:
-            return unicode(item.text())
+            return to_unicode(item.text())
         else:
-            return u''
+            return to_unicode('')
 
 
     def addRecipient(self, name, update=True):
@@ -695,7 +695,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
             if col != 0:
                 item = self.RecipientsTable.item(row, 0)
 
-            self.fab.selectByName(unicode(item.text()))
+            self.fab.selectByName(to_unicode(item.text()))
             self.fab.show()
 
 
@@ -708,8 +708,8 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         self.warn_icon = QIcon(load_pixmap("warning", "16x16"))
         self.error_icon = QIcon(load_pixmap("error", "16x16"))
         self.busy_icon = QIcon(load_pixmap("busy", "16x16"))
-        self.update_queue = Queue.Queue() # UI updates from send thread
-        self.event_queue = Queue.Queue() # UI events (cancel) to send thread
+        self.update_queue = queue.Queue() # UI updates from send thread
+        self.event_queue = queue.Queue() # UI events (cancel) to send thread
         self.send_fax_active = False
 
 
@@ -734,8 +734,8 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         ppd_file = cups.getPPD(self.printer_name)
 
         if ppd_file is not None and os.path.exists(ppd_file):
-            if file(ppd_file, 'r').read().find('HP Fax') == -1:
-                FailureUI(self, self.__tr("<b>Fax configuration error.</b><p>The CUPS fax queue for '%1' is incorrectly configured.<p>Please make sure that the CUPS fax queue is configured with the 'HPLIP Fax' Model/Driver.").arg(self.printer_name))
+            if open(ppd_file, 'rb').read().find(b'HP Fax') == -1:
+                FailureUI(self, self.__tr("<b>Fax configuration error.</b><p>The CUPS fax queue for '%s' is incorrectly configured.<p>Please make sure that the CUPS fax queue is configured with the 'HPLIP Fax' Model/Driver."%self.printer_name))
                 self.close()
                 return
 
@@ -750,12 +750,12 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         try:
             try:
                 self.dev.open()
-            except Error, e:
+            except Error as e:
                 log.warn(e.msg)
 
             try:
                 self.dev.queryDevice(quick=True)
-            except Error, e:
+            except Error as e:
                 log.error("Query device error (%s)." % e.msg)
                 self.dev.error_state = ERROR_STATE_ERROR
 
@@ -766,7 +766,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         if self.dev.error_state > ERROR_STATE_MAX_OK and \
             self.dev.error_state not in (ERROR_STATE_LOW_SUPPLIES, ERROR_STATE_LOW_PAPER):
 
-            FailureUI(self, self.__tr("<b>Device is busy or in an error state (code=%1)</b><p>Please wait for the device to become idle or clear the error and try again.").arg(self.dev.status_code))
+            FailureUI(self, self.__tr("<b>Device is busy or in an error state (code=%s)</b><p>Please wait for the device to become idle or clear the error and try again."%self.dev.status_code))
             self.NextButton.setEnabled(True)
             return
 
@@ -775,7 +775,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         for p in self.cups_printers:
             if p.name == self.printer_name:
                 if p.state == cups.IPP_PRINTER_STATE_STOPPED:
-                    FailureUI(self, self.__tr("<b>The CUPS queue for '%1' is in a stopped or busy state.</b><p>Please check the queue and try again.").arg(self.printer_name))
+                    FailureUI(self, self.__tr("<b>The CUPS queue for '%s' is in a stopped or busy state.</b><p>Please check the queue and try again."%self.printer_name))
                     self.NextButton.setEnabled(False)
                     return
                 break
@@ -833,7 +833,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
         while self.update_queue.qsize():
             try:
                 status, page_num, arg = self.update_queue.get(0)
-            except Queue.Empty:
+            except queue.Empty:
                 break
 
             if status == fax.STATUS_IDLE:
@@ -843,25 +843,26 @@ class SendFaxDialog(QDialog, Ui_Dialog):
                 self.SendFaxTimer.stop()
 
             elif status == fax.STATUS_PROCESSING_FILES:
-                self.addStatusMessage(self.__tr("Processing page %1...").arg(page_num), self.busy_icon)
+                self.addStatusMessage(self.__tr("Processing page %s..."%page_num), self.busy_icon)
 
             elif status == fax.STATUS_SENDING_TO_RECIPIENT:
-                self.addStatusMessage(self.__tr("Sending fax to %1...").arg(arg), self.busy_icon)
+                self.addStatusMessage(self.__tr("Sending fax to %s..."%arg), self.busy_icon)
 
             elif status == fax.STATUS_DIALING:
-                self.addStatusMessage(self.__tr("Dialing %1...").arg(arg), self.busy_icon)
+                self.addStatusMessage(self.__tr("Dialing %s..."%arg), self.busy_icon)
 
             elif status == fax.STATUS_CONNECTING:
-                self.addStatusMessage(self.__tr("Connecting to %1...").arg(arg), self.busy_icon)
+                self.addStatusMessage(self.__tr("Connecting to %s..."%arg), self.busy_icon)
 
             elif status == fax.STATUS_SENDING:
-                self.addStatusMessage(self.__tr("Sending page %1 to %2...").arg(page_num).arg(arg),
+                self.addStatusMessage(self.__tr("Sending page %s to %s..."%(page_num,arg)),
                                       self.busy_icon)
 
             elif status == fax.STATUS_CLEANUP:
                 self.addStatusMessage(self.__tr("Cleaning up..."), self.busy_icon)
 
-            elif status in (fax.STATUS_ERROR, fax.STATUS_BUSY, fax.STATUS_COMPLETED):
+            elif status in (fax.STATUS_ERROR, fax.STATUS_BUSY, fax.STATUS_COMPLETED, fax.STATUS_ERROR_IN_CONNECTING, 
+                fax.STATUS_ERROR_IN_TRANSMITTING, fax.STATUS_ERROR_PROBLEM_IN_FAXLINE, fax.STATUS_JOB_CANCEL ):
                 self.busy = False
                 self.send_fax_active = False
                 self.setCancelCloseButton()
@@ -873,8 +874,24 @@ class SendFaxDialog(QDialog, Ui_Dialog):
                     if error_state == pml.DN_ERROR_NONE:
                         self.addStatusMessage(self.__tr("Fax send error (Possible cause: No answer or dialtone)"), self.error_icon)
                     else:
-                        self.addStatusMessage(self.__tr("Fax send error (%1)").arg(pml.DN_ERROR_STR.get(error_state, "Unknown error")), self.error_icon)
+                        self.addStatusMessage(self.__tr("Fax send error (%s)"%pml.DN_ERROR_STR.get(error_state, "Unknown error")), self.error_icon)
                     self.dev.sendEvent(EVENT_FAX_JOB_FAIL, self.printer_name, 0, '')
+
+                elif status == fax.STATUS_ERROR_IN_CONNECTING:
+                    self.addStatusMessage(self.__tr("Fax send error (Error in connecting)"), self.error_icon)
+                    self.dev.sendEvent(EVENT_FAX_JOB_FAIL, self.printer_name, 0, '')
+
+                elif status == fax.STATUS_ERROR_IN_TRANSMITTING:
+                    self.addStatusMessage(self.__tr("Fax send error (Error in transmitting)"), self.error_icon)
+                    self.dev.sendEvent(EVENT_FAX_JOB_FAIL, self.printer_name, 0, '')
+
+                elif status == fax.STATUS_ERROR_PROBLEM_IN_FAXLINE:
+                    self.addStatusMessage(self.__tr("Fax send error (Problem with the fax line)"), self.error_icon)
+                    self.dev.sendEvent(EVENT_FAX_JOB_FAIL, self.printer_name, 0, '')
+
+                elif status == fax.STATUS_JOB_CANCEL:
+                    self.addStatusMessage(self.__tr("(Fax Job Cancelled)"), self.error_icon)
+                    self.dev.sendEvent(EVENT_FAX_JOB_FAIL, self.printer_name, 0, '')  
 
                 elif status == fax.STATUS_BUSY:
                     #FailureUI(self, self.__tr("<b>Fax device is busy.</b><p>Please try again later."))
@@ -915,8 +932,12 @@ class SendFaxDialog(QDialog, Ui_Dialog):
     def CheckTimer_timeout(self):
         if not self.busy:
             #log.debug("Checking for incoming faxes...")
-            device_uri, printer_name, event_code, username, job_id, title, timedate, fax_file = \
-                self.service.CheckForWaitingFax(self.device_uri, prop.username, self.last_job_id)
+            try:
+                device_uri, printer_name, event_code, username, job_id, title, timedate, fax_file = \
+                    self.service.CheckForWaitingFax(self.device_uri, prop.username, self.last_job_id)
+            except Exception as e:
+                log.debug("Exception caught in CheckTimer_timeout: %s" % e)
+                fax_file = None
 
             if fax_file:
                 self.last_job_id = 0
@@ -939,7 +960,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def getFileInfo(self, fax_file):
-        f = file(fax_file, 'r')
+        f = open(fax_file, 'rb')
         header = f.read(fax.FILE_HEADER_SIZE)
         f.close()
 
@@ -1020,7 +1041,7 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def updateStepText(self, p):
-        self.StepText.setText(self.__tr("Step %1 of %2").arg(p+1).arg(PAGE_MAX+1))
+        self.StepText.setText(self.__tr("Step %s of %s"%(p+1,PAGE_MAX+1)))
 
 
     def restoreNextButton(self):
@@ -1028,6 +1049,6 @@ class SendFaxDialog(QDialog, Ui_Dialog):
 
 
     def __tr(self,s,c = None):
-        return qApp.translate("SendFaxDialog",s,c)
+        return qApp.translate("SendFaxDialog",s.encode('utf-8'),c)
 
 

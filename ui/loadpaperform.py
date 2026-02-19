@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,11 +23,11 @@
 
 # Local
 from base.g import *
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
-from loadpaperform_base import LoadPaperForm_base
+from .loadpaperform_base import LoadPaperForm_base
 
 
 class LoadPaperForm(LoadPaperForm_base):

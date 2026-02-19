@@ -2,7 +2,7 @@
 
   soaphti.h - HP SANE backend support for soap based multi-function peripherals
 
-  (c) 2006,2008 Copyright Hewlett-Packard Development Company, LP
+  (c) 2006,2008 Copyright HP Development Company, LP
 
   Permission is hereby granted, free of charge, to any person obtaining a copy 
   of this software and associated documentation files (the "Software"), to deal 
@@ -26,16 +26,19 @@
   one page only when multiple pages are loaded, the second page will jam. This is how the
   hardware works. The Windows driver has the same limitation.
 
-  Author: David Suffield
+  Author: David Suffield, Sarbeswar Meher
 
 \************************************************************************************/
 
 #ifndef _SOAPHTI_H
 #define _SOAPHTI_H
 
-#define SOAP_CONTRAST_MIN -127
-#define SOAP_CONTRAST_MAX 127
+#define SOAP_CONTRAST_MIN -1000 /*According the SOAP spec*/
+#define SOAP_CONTRAST_MAX 1000
 #define SOAP_CONTRAST_DEFAULT 0
+#define SOAP_BRIGHTNESS_MIN -1000 /*According the SOAP spec*/
+#define SOAP_BRIGHTNESS_MAX 1000
+#define SOAP_BRIGHTNESS_DEFAULT 0
 
 #define MM_PER_INCH     25.4
 
@@ -47,6 +50,7 @@ enum SOAP_OPTION_NUMBER
                    SOAP_OPTION_SCAN_RESOLUTION,
                    SOAP_OPTION_INPUT_SOURCE,     /* platen, ADF, ADFDuplex */ 
    SOAP_OPTION_GROUP_ADVANCED,
+                   SOAP_OPTION_BRIGHTNESS,
                    SOAP_OPTION_CONTRAST,
                    SOAP_OPTION_COMPRESSION,
                    SOAP_OPTION_JPEG_QUALITY,
@@ -119,6 +123,9 @@ struct soap_session
    SANE_Range contrastRange;
    SANE_Int currentContrast;
 
+   SANE_Range brightnessRange;
+   SANE_Int currentBrightness;
+
    SANE_String_Const compressionList[SF_MAX];
    enum SCAN_FORMAT compressionMap[SF_MAX];
    enum SCAN_FORMAT currentCompression; 
@@ -133,14 +140,18 @@ struct soap_session
 
    SANE_Fixed platen_min_width, platen_min_height;
    SANE_Range platen_tlxRange, platen_tlyRange, platen_brxRange, platen_bryRange;
+   SANE_Int platen_resolutionList[MAX_LIST_SIZE];
+
    SANE_Fixed adf_min_width, adf_min_height;
    SANE_Range adf_tlxRange, adf_tlyRange, adf_brxRange, adf_bryRange;
-
+   SANE_Int adf_resolutionList[MAX_LIST_SIZE];
+   
    IP_HANDLE ip_handle;
 
    int index;                    /* dime buffer index */
    int cnt;                      /* dime buffer count */
-   unsigned char buf[16384];    /* dime buffer */
+   unsigned char buf[65536];    /* dime buffer */ /*Setting to max 64K for dime buffer*/
+   int user_cancel;
 
    void *hpmud_handle;         /* returned by dlopen */
    void *math_handle;         /* returned by dlopen */

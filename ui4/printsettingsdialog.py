@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,17 +23,19 @@
 from base.g import *
 from base import device
 from prnt import cups
-from ui_utils import *
+from .ui_utils import *
 
 # Qt
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 # Ui
-from printsettingsdialog_base import Ui_Dialog
-from printsettingstoolbox import PrintSettingsToolbox
-from printernamecombobox import PRINTERNAMECOMBOBOX_TYPE_PRINTER_AND_FAX, PRINTERNAMECOMBOBOX_TYPE_FAX_ONLY
+from .printsettingsdialog_base import Ui_Dialog
+from .printsettingstoolbox import PrintSettingsToolbox
+from .printernamecombobox import PRINTERNAMECOMBOBOX_TYPE_PRINTER_AND_FAX, PRINTERNAMECOMBOBOX_TYPE_FAX_ONLY
 
+#signal
+import signal
 
 class PrintSettingsDialog(QDialog, Ui_Dialog):
     def __init__(self, parent, printer_name, fax_mode=False):
@@ -74,6 +76,8 @@ class PrintSettingsDialog(QDialog, Ui_Dialog):
 
         self.connect(self.PrinterName, SIGNAL("PrinterNameComboBox_noPrinters"),
             self.PrinterNameComboBox_noPrinters)
+
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
         # Application icon
         self.setWindowIcon(QIcon(load_pixmap('hp_logo', '128x128')))

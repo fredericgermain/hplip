@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,16 +16,32 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Naga Samrat Chowdary Narla,
 #
 
 # NOTE: Not used by Qt4 code. Use maint_*.py modules instead.
 
 # Local
-from g import *
-from codes import *
-import status, pml
+from .g import *
+from .codes import *
+from . import status, pml
 from prnt import pcl, ldl, colorcal
+import time
+from .sixext import to_bytes_utf8, StringIO
+
+# ************************* LEDM Clean**************************************** #
+CleanXML = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!--  THIS DATA SUBJECT TO DISCLAIMER(S)INCLUDED WITH THE PRODUCT OF ORIGIN. -->
+<ipcap:InternalPrintCap xmlns:ipcap=\"http://www.hp.com/schemas/imaging/con/ledm/internalprintcap/2008/03/21\" xmlns:ipdyn=\"http://www.hp.com/schemas/imaging/con/ledm/internalprintdyn/2008/03/21\" xmlns:dd=\"http://www.hp.com/schemas/imaging/con/dictionaries/1.0/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:schemaLocation=\"http://www.hp.com/schemas/imaging/con/ledm/internalprintcap/2008/03/21 ../schemas/InternalPrintCap.xsd http://www.hp.com/schemas/imaging/con/ledm/internalprintdyn/2008/03/21 ../schemas/InternalPrintDyn.xsd http://www.hp.com/schemas/imaging/con/dictionaries/1.0/ ../schemas/dd/DataDictionaryMasterLEDM.xsd\">
+                                <ipdyn:JobType>%s</ipdyn:JobType>
+</ipcap:InternalPrintCap>\"
+
+        """
+
+status_xml = '/DevMgmt/InternalPrintDyn.xml'
+LEDM_CLEAN_CAP_XML = '/DevMgmt/InternalPrintCap.xml'
+LEDM_CLEAN_VERIFY_PAGE_JOB="<ipdyn:JobType>cleaningVerificationPage</ipdyn:JobType>"
+# **************************************************************************** #
 
 # ********************** Align **********************
 
@@ -33,12 +49,12 @@ def AlignType1(dev, loadpaper_ui): # Auto VIP (using embedded PML)
     ok = loadpaper_ui()
     if ok:
         dev.writeEmbeddedPML(pml.OID_AUTO_ALIGNMENT,
-                             pml.AUTO_ALIGNMENT, style=0, 
+                             pml.AUTO_ALIGNMENT, style=0,
                              direct=True)
         dev.closePrint()
 
     return ok
-    
+
 def AlignType1PML(dev, loadpaper_ui): # Auto VIP (using PML)
     ok = loadpaper_ui()
     if ok:
@@ -404,7 +420,7 @@ def alignType10SetPattern(dev):
 
     log.debug("Pattern=%d" % pattern)
     return pattern
-    
+
 
 def alignType10Phase1(dev):
     dev.writeEmbeddedPML(pml.OID_PRINT_INTERNAL_PAGE,
@@ -422,7 +438,7 @@ def alignType10Phase2(dev, values, pattern):
             break
         p = ''.join([p, pcl.ESC, '*o5W\x1a', chr(i), '\x00', chr(pattern), chr(x), '\n'])
 
-    p = ''.join([p, pcl.UEL]) 
+    p = ''.join([p, pcl.UEL])
 
     dev.printData(p)
     dev.closePrint()
@@ -490,7 +506,7 @@ def align10and11and14Controls(pattern, align_type):
                          'F' : (True, 9),
                          'G' : (True, 9),
                          'H' : (True, 9),
-                         'I' : (True, 9),}    
+                         'I' : (True, 9),}
 
     else:
         if pattern == 1:
@@ -530,7 +546,7 @@ def AlignType11(dev, loadpaper_ui, align_ui, invalidpen_ui):
     if pattern is None:
         invalidpen_ui()
         return
-        
+
     state = 0
     while state != -1:
         if state == 0:
@@ -570,9 +586,9 @@ def alignType11SetPattern(dev):
     elif dev.pen_config == AGENT_CONFIG_PHOTO_ONLY:
         return None
 
-    log.debug("Pattern=%d" % pattern) 
+    log.debug("Pattern=%d" % pattern)
     return pattern
-    
+
 
 def alignType11Phase1(dev):
     dev.printData(ldl.buildResetPacket())
@@ -620,13 +636,183 @@ def alignType13Phase1(dev):
     dev.setPML(pml.OID_AUTO_ALIGNMENT, pml.AUTO_ALIGNMENT)
     dev.closePML()
 
+calibrationSession = 1
+
+def dataModelHelper(dev, func, ui2):
+    data = status.StatusType10FetchUrl(func, "/Calibration/State")
+    if not data:
+        data = status.StatusType10FetchUrl(func, "/Calibration/State")
+
+    if not data:
+        log.debug("Unable to retrieve calibration state")
+        dev.close()
+        return 0
+
+    if to_bytes_utf8("ParmsRequested") in data:
+        log.error("Restart device and start alignment")
+        dev.close()
+        return 1
+
+    if to_bytes_utf8("404 Not Found") in data:
+        log.error("Device may not support Alignment")
+        dev.close()
+        return 1
+
+    if to_bytes_utf8("Printing<") in data:
+        log.warn("Previous alignment job not completed")
+        dev.close()
+        return 1
+
+    data = status.StatusType10FetchUrl(func, "/DevMgmt/ConsumableConfigDyn.xml")
+    if to_bytes_utf8("AlignmentMode") not in data:
+        log.error("Device may not support Alignment")
+        dev.close()
+        return 1
+
+    if to_bytes_utf8("automatic") in data:
+        log.debug("Device supports automatic calibration")
+        status.StatusType10FetchUrl(func, "/Calibration/Session", "<cal:CalibrationState xmlns:cal=\\\"http://www.hp.com/schemas/imaging/con/cnx/markingagentcalibration/2009/04/08\\\" xmlns:dd=\\\"http://www.hp.com/schemas/imaging/con/dictionaries/1.0/\\\">Printing</cal:CalibrationState>")
+        dev.close()
+        return 0
+
+    if to_bytes_utf8("semiAutomatic") in data:
+        log.debug("Device supports semiAutomatic calibration")
+        status.StatusType10FetchUrl(func, "/Calibration/Session", "<cal:CalibrationState xmlns:cal=\\\"http://www.hp.com/schemas/imaging/con/cnx/markingagentcalibration/2009/04/08\\\" xmlns:dd=\\\"http://www.hp.com/schemas/imaging/con/dictionaries/1.0/\\\">Printing</cal:CalibrationState>")
+        dev.close()
+        return ui2()
+
+    if to_bytes_utf8("manual") in data:
+        log.debug("Device supports manual calibration")
+        data = status.StatusType10FetchUrl(func, "/Calibration/Session", "<cal:CalibrationState xmlns:cal=\\\"http://www.hp.com/schemas/imaging/con/cnx/markingagentcalibration/2009/04/08\\\" xmlns:dd=\\\"http://www.hp.com/schemas/imaging/con/dictionaries/1.0/\\\">Printing</cal:CalibrationState>")
+        import string
+        data = string.split(data, "/Jobs")[1]
+        data = string.split(data, "\r\n")[0]
+        data = "/Jobs" + data
+        data = status.StatusType10FetchUrl(func, data)
+        data = string.split(data, "Session/")[1]
+        data = string.split(data, "<")[0]
+        data = "/Calibration/Session/" + data + "/ManualSelectedPatterns.xml"
+        global calibrationSession
+        calibrationSession = data
+        dev.close()
+    return 0
+
+def AlignType16Manual(dev, a, b, c, d, e, f, g, h, i, j):
+    log.debug("a=%s b=%s c=%s d=%s e=%s f=%s g=%s h=%s i=%s j=%s" % (a, b, c, d, e, f, g, h, i, j ))
+    func = dev.getEWSUrl_LEDM
+    data = status.StatusType10FetchUrl(func, "/Calibration/State")
+
+    if not data:
+        return 0
+
+    while "ParmsRequested" not in data:
+        if "CalibrationValid" in data:
+            return
+        data = status.StatusType10FetchUrl(func, "/Calibration/State")
+    data = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- THIS DATA SUBJECT TO DISCLAIMER(S) INCLUDED WITH THE PRODUCT OF ORIGIN. -->\n<ManualSelectedPatterns xmlns=\"http://www.hp.com/schemas/imaging/con/cnx/markingagentcalibration/2009/04/08\" xmlns:locid=\"http://www.hp.com/schemas/imaging/con/ledm/localizationids/2007/10/31/\" xmlns:psdyn=\"http://www.hp.com/schemas/imaging/con/ledm/productstatdyn/2007/10/31\"><SelectedPattern><Identifier><Id>1</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>2</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>3</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>4</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>5</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>6</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>7</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>8</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern><SelectedPattern><Identifier><Id>9</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern></SelectedPattern><SelectedPattern><Identifier><Id>10</Id></Identifier><Choice><Identifier><Id>%s</Id></Identifier></Choice></SelectedPattern></ManualSelectedPattern>" % ( a, b, c, d, e, f, g, h, i, j )
+    data = "PUT %s HTTP/1.1\r\nHost: localhost\r\nUser-Agent: hp\r\nAccept: text/plain\r\nAccept-Language: en-us,en\r\nAccept-Charset:utf-8\r\nContent-Type: text/xml\r\nContent-Length: %s\r\n\r\n" % ( calibrationSession, len(data)) + data
+    data = status.StatusType10FetchUrl(func, calibrationSession, data)
+
+def AlignType15(dev, loadpaper_ui, ui2):
+    if not loadpaper_ui():
+        return
+    return dataModelHelper(dev, dev.getEWSUrl_LEDM, ui2)
+
+def AlignType15Phase1(dev, ui2):
+    return dataModelHelper(dev, dev.getEWSUrl_LEDM, ui2)
+
+#AlignType 17 is LEDM via FF/CC/0 USB channel
+def AlignType17(dev, loadpaper_ui, ui2):
+    if not loadpaper_ui():
+        return
+    return dataModelHelper(dev, dev.getUrl_LEDM, ui2)
+
+def AlignType17Phase1(dev, ui2):
+    return dataModelHelper(dev, dev.getUrl_LEDM, ui2)
+
+def AlignType16(dev, loadpaper_ui, align_ui):
+    if not loadpaper_ui():
+        return
+    dataModelHelper(dev, dev.getEWSUrl_LEDM, align_ui)
+    state, a, b, c, d, e, f, g, h, i, j = 0, 6, 6, 3, 3, 6, 6, 6, 6, 6, 6
+    ok = False
+    while state != -1:
+        if state == 0:
+            state = -1
+            ok, a = align_ui('A', 'v', 'kc', 3, 23)
+            if ok:
+                state = 1
+
+        elif state == 1:
+            state = -1
+            ok, b = align_ui('B', 'h', 'kc', 3, 17)
+            if ok:
+                state = 2
+
+        elif state == 2:
+            state = -1
+            ok, c = align_ui('C', 'v', 'k', 3, 23)
+            if ok:
+                state = 3
+
+        elif state == 3:
+            state = -1
+            ok, d = align_ui('D', 'v', 'c', 3, 23)
+            if ok:
+                state = 4
+
+        elif state == 4:
+            state = -1
+            ok, e = align_ui('E', 'h', 'k', 3, 11)
+            if ok:
+                state = 5
+
+        elif state == 5:
+            state = -1
+            ok, f = align_ui('F', 'h', 'k', 3, 11)
+            if ok:
+                state = 6
+
+        elif state == 6:
+            state = -1
+            ok, g = align_ui('G', 'h', 'k', 3, 11)
+            if ok:
+                state = 7
+
+        elif state == 7:
+            state = -1
+            ok, h = align_ui('H', 'h', 'k', 3, 11)
+            if ok:
+                state = 8
+
+        elif state == 8:
+            state = -1
+            ok, i = align_ui('I', 'v', 'k', 3, 19)
+            if ok:
+                state = 9
+
+        elif state == 9:
+            state = -1
+            ok, j = align_ui('J', 'v', 'k', 3, 19)
+            if ok:
+                state = 10
+
+        elif state == 10:
+            state = -1
+
+    AlignType16Manual(dev, a, b, c, d, e, f, g, h, i, j)
+
+    return ok
+
+def AlignType16Phase1(dev, a, b, c, d, e, f, g, h, i, j):
+    AlignType16Manual(dev, a, b, c, d, e, f, g, h, i, j)
 
 def AlignType14(dev, loadpaper_ui, align_ui, invalidpen_ui):
     pattern = alignType14SetPattern(dev)
     if pattern is None:
         invalidpen_ui()
         return
-        
+
     state = 0
     while state != -1:
         if state == 0:
@@ -666,9 +852,9 @@ def alignType14SetPattern(dev):
     elif dev.pen_config == AGENT_CONFIG_PHOTO_ONLY:
         return None
 
-    log.debug("Pattern=%d" % pattern) 
+    log.debug("Pattern=%d" % pattern)
     return pattern
-    
+
 
 def alignType14Phase1(dev):
     dev.printData(ldl.buildResetPacket())
@@ -1080,21 +1266,24 @@ def alignType8Phase2(dev, num_inks, a, b, c, d): # 450
 
     dev.printData(s)
     dev.closePrint()
-    
-    
+
+
 def AlignType12(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.setPML(pml.OID_PRINT_INTERNAL_PAGE, pml.PRINT_INTERNAL_PAGE_ALIGNMENT_PAGE)
         dev.closePML()
 
 # ********************** Clean **********************
-
+def cleanVerifyPage(dev):
+    # By default Clean verification page is Enabled
+    return True
 
 def cleaning(dev, clean_type, level1, level2, level3,
-              loadpaper_ui, dlg1, dlg2, dlg3, wait_ui):
+              loadpaper_ui, dlg1, dlg2, dlg3, wait_ui, verify_page = cleanVerifyPage):
 
     state = 0
-
+    level = 0
+    print_verify_page = verify_page(dev)
     while state != -1:
         if state == 0: # Initial level1 print
             state = 1
@@ -1102,10 +1291,17 @@ def cleaning(dev, clean_type, level1, level2, level3,
                 ok = loadpaper_ui()
                 if not ok:
                     state = -1
+            elif clean_type == CLEAN_TYPE_LEDM and print_verify_page == False:
+                ok = loadpaper_ui("Clean functinality conformation...", "Clean Conformation")
+                if not ok:
+                    state = -1
 
         elif state == 1: # Do level 1
             level1(dev)
-            state = 2
+            if clean_type == CLEAN_TYPE_LEDM and print_verify_page == False :
+                state = 3
+            else:
+                state = 2
 
         elif state == 2: # Load plain paper
             state = -1
@@ -1115,17 +1311,27 @@ def cleaning(dev, clean_type, level1, level2, level3,
 
         elif state == 3: # Print test page
             state = 4
-            print_clean_test_page(dev)
+            if clean_type == CLEAN_TYPE_LEDM:
+                cleanTypeVerify(dev,1, print_verify_page)
+            else:
+                print_clean_test_page(dev)
 
         elif state == 4: # Need level 2?
             state = -1
-            ok = dlg1()
+            if print_verify_page == False :
+                ok = dlg1("Clean Level 1 is Completed.")
+            else:
+                ok = dlg1()
+
             if ok:
                 state = 5
 
         elif state == 5: # Do level 2
             level2(dev)
-            state = 6
+            if clean_type == CLEAN_TYPE_LEDM and print_verify_page == False :
+                state = 7
+            else:
+                state = 6
 
         elif state == 6: # Load plain paper
             state = -1
@@ -1135,17 +1341,28 @@ def cleaning(dev, clean_type, level1, level2, level3,
 
         elif state == 7: # Print test page
             state = 8
-            print_clean_test_page(dev)
+            if clean_type == CLEAN_TYPE_LEDM:
+                cleanTypeVerify(dev,2,print_verify_page)
+            else:
+                print_clean_test_page(dev)
 
         elif state == 8: # Need level 3?
             state = -1
-            ok = dlg2()
+            if print_verify_page == False :
+                ok = dlg2("Clean Level 2 is Completed.")
+            else:
+                ok = dlg2()
+
             if ok:
                 state = 9
 
         elif state == 9: # Do level 3
             level3(dev)
             state = 10
+            if clean_type == CLEAN_TYPE_LEDM and print_verify_page == False :
+                state = 11
+            else:
+                state = 10
 
         elif state == 10: # Load plain paper
             state = -1
@@ -1155,11 +1372,17 @@ def cleaning(dev, clean_type, level1, level2, level3,
 
         elif state == 11: # Print test page
             state = 12
-            print_clean_test_page(dev)
+            if clean_type == CLEAN_TYPE_LEDM:
+                cleanTypeVerify(dev,3,print_verify_page)
+            else:
+                print_clean_test_page(dev)
 
         elif state == 12:
             state = -1
-            dlg3()
+            if print_verify_page == False :
+                dlg3("Level 3 cleaning complete. Check this page to see if the problem was fixed. replace the print cartridge(s)")
+            else:
+                dlg3()
 
     return ok
 
@@ -1201,6 +1424,91 @@ def wipeAndSpitType2(dev): # LIDIL, Level 3
                                        ldl.COMMAND_HANDLE_PEN,
                                        ldl.COMMAND_HANDLE_PEN_CLEAN_LEVEL3))
     dev.closePrint()
+
+def setCleanType(name):
+    try:
+      xml = CleanXML %(name)
+    except(UnicodeEncodeError, UnicodeDecodeError):
+      log.error("Unicode Error")
+    return xml
+
+
+def getCleanLedmCapacity(dev):
+    data_fp = StringIO()
+    status_type = dev.mq.get('status-type', STATUS_TYPE_NONE)
+
+    if status_type == STATUS_TYPE_LEDM:
+       func = dev.getEWSUrl_LEDM
+    elif status_type == STATUS_TYPE_LEDM_FF_CC_0:
+       func = dev.getUrl_LEDM
+    else:
+        log.error("Not an LEDM status-type: %d" % status_type)
+        return ""
+
+    data = func(LEDM_CLEAN_CAP_XML, data_fp)
+    if data:
+        data = data.split(b'\r\n\r\n', 1)[1]
+        if data:
+            data = status.ExtractXMLData(data)
+    return data
+
+
+def isCleanTypeLedmWithPrint(dev):
+    IPCap_data = getCleanLedmCapacity(dev)
+
+    if LEDM_CLEAN_VERIFY_PAGE_JOB in IPCap_data:
+        return True
+    else:
+        return False
+
+
+def cleanTypeLedm(dev): #LEDM, level 1
+    xml = setCleanType('cleaningPage')
+    dev.post(status_xml, xml)
+    dev.closePrint()
+
+def cleanTypeLedm1(dev): #LEDM, level 2
+    xml = setCleanType('cleaningPageLevel1')
+    dev.post(status_xml, xml)
+    dev.closePrint()
+
+def cleanTypeLedm2(dev): #LEDM, level 3
+    xml = setCleanType('cleaningPageLevel2')
+    dev.post(status_xml, xml)
+    dev.closePrint()
+
+def cleanTypeVerify(dev,level, print_verification_page = True): #LEDM Test Page
+    state = 0
+    timeout = 0
+    status_type = dev.mq.get('status-type', STATUS_TYPE_NONE)
+    xml = setCleanType('cleaningVerificationPage')
+
+    if status_type == STATUS_TYPE_LEDM:
+       func = dev.getEWSUrl_LEDM
+
+    elif status_type == STATUS_TYPE_LEDM_FF_CC_0:
+       func = dev.getUrl_LEDM
+
+    else:
+        log.error("Not an LEDM status-type: %d" % status_type)
+
+    print("Performing level %d cleaning...." % level)
+
+    while state != -1:
+       status_block = status.StatusType10Status(func)
+
+       if status_block['status-code'] == STATUS_PRINTER_IDLE: # Printer Ready
+             state = -1
+             if print_verification_page:
+                 dev.post(status_xml, xml)
+       else:
+             time.sleep(8)
+             timeout += 1
+
+       if timeout > 20:
+             log.error("Timeout waiting for Clean to finish.")
+             sys.exit(0)
+
 
 
 # ********************** Color Cal **********************
@@ -1414,7 +1722,7 @@ def colorCalType3Phase1(dev):
 def colorCalType3Phase2(dev, A, B):
     photo_adj = colorcal.PHOTO_ALIGN_TABLE[A-1][B-1]
     color_adj = colorcal.COLOR_ALIGN_TABLE[A-1][B-1]
-    adj_value = (color_adj << 8L) + photo_adj
+    adj_value = (color_adj << 8) + photo_adj
 
     dev.writeEmbeddedPML(pml.OID_COLOR_CALIBRATION_SELECTION, adj_value)
     dev.closePrint()
@@ -1456,7 +1764,7 @@ def colorCalType4(dev, loadpaper_ui, colorcal_ui, wait_ui):
 def colorCalType4Phase1(dev):
     dev.setPML(pml.OID_PRINT_INTERNAL_PAGE,
               pml.PRINT_INTERNAL_PAGE_COLOR_CAL)
-              
+
     dev.closePML()
 
 
@@ -1490,29 +1798,29 @@ def colorCalType4Phase2(dev, values):
 
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_1,
                             kadj)
-                            
+
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_2,
                             Cadj)
-                            
+
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_3,
                             Madj)
-    
+
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_4,
                             Yadj)
-                            
+
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_5,
                             cadj)
-    
+
     dev.setPML(pml.OID_COLOR_CALIBRATION_ARRAY_6,
                             madj)
-                            
+
     dev.closePML()
 
 
 def colorCalType4Phase3(dev):
     dev.setPML(pml.OID_PRINT_INTERNAL_PAGE,
                          pml.PRINT_INTERNAL_PAGE_COLOR_PALETTE_CMYK_PAGE)
-                         
+
     dev.closePML()
 
 
@@ -1521,32 +1829,32 @@ def colorCalType5(dev, loadpaper_ui):
         dev.printData("""\x1b%-12345X@PJL ENTER LANGUAGE=PCL3GUI\n\x1bE\x1b%Puifp.multi_button_push 20;\nudw.quit;\x1b*rC\x1bE\x1b%-12345X""")
         dev.closePrint()
 
-        
+
 def colorCalType6(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.setPML(pml.OID_PRINT_INTERNAL_PAGE, pml.PRINT_INTERNAL_PAGE_COLOR_CAL)
         dev.closePML()
-        
+
 def colorCalType7(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.setPML(pml.OID_PRINT_INTERNAL_PAGE, pml.PRINT_INTERNAL_PAGE_AUTOMATIC_COLOR_CALIBRATION)
         dev.closePML()
 
-# ********************** LF Cal **********************        
-        
+# ********************** LF Cal **********************
+
 def linefeedCalType1(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.printData("""\x1b%-12345X@PJL ENTER LANGUAGE=PCL3GUI\n\x1bE\x1b%Puifp.multi_button_push 3;\nudw.quit;\x1b*rC\x1bE\x1b%-12345X""")
         dev.closePrint()
-        
+
 def linefeedCalType2(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.setPML(pml.OID_PRINT_INTERNAL_PAGE, pml.PRINT_INTERNAL_PAGE_LINEFEED_CALIBRATION)
         dev.closePML()
 
 
-# ********************** PQ Diag **********************        
-        
+# ********************** PQ Diag **********************
+
 def printQualityDiagType1(dev, loadpaper_ui):
     if loadpaper_ui():
         dev.printData("""\x1b%-12345X@PJL ENTER LANGUAGE=PCL3GUI\n\x1bE\x1b%Puifp.multi_button_push 14;\nudw.quit;\x1b*rC\x1bE\x1b%-12345X""")

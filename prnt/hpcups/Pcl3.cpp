@@ -1,7 +1,7 @@
 /*****************************************************************************\
   Pcl3.cpp : Implementation of Pcl3 class
 
-  Copyright (c) 1996 - 2009, Hewlett-Packard Co.
+  Copyright (c) 1996 - 2015, HP Co.
   All rights reserved.
 
   Redistribution and use in source and binary forms, with or without
@@ -12,7 +12,7 @@
   2. Redistributions in binary form must reproduce the above copyright
      notice, this list of conditions and the following disclaimer in the
      documentation and/or other materials provided with the distribution.
-  3. Neither the name of Hewlett-Packard nor the names of its
+  3. Neither the name of HP nor the names of its
      contributors may be used to endorse or promote products derived
      from this software without specific prior written permission.
 
@@ -66,13 +66,13 @@ DRIVER_ERROR Pcl3::Configure(Pipeline **pipeline)
 
     if (!selectPrintMode())
     {
-        dbglog("selectPrintMode failed, PrintMode name = %s", m_pQA->print_mode_name);
+        dbglog("selectPrintMode failed, PrintMode name = %s\n", m_pQA->print_mode_name);
         return UNSUPPORTED_PRINTMODE;
     }
     if (m_pPM->BaseResX != m_pQA->horizontal_resolution ||
         m_pPM->BaseResY != m_pQA->vertical_resolution)
     {
-        dbglog("Requested resolution not supported with requested printmode");
+        dbglog("Requested resolution not supported with requested printmode\n");
 	return UNSUPPORTED_PRINTMODE;
     }
 
@@ -220,7 +220,7 @@ void Pcl3::configureRasterData()
 {
     if (m_pPM == NULL)
     {
-        dbglog("configureRasterData: m_pPM is NULL");
+        dbglog("configureRasterData: m_pPM is NULL\n");
         return;
     }
     BYTE    *p = cur_pcl_buffer_ptr;
@@ -255,7 +255,7 @@ bool Pcl3::selectPrintMode()
 {
     if (m_pJA->printer_platform[0] == 0)
     {
-        dbglog("printer_platform is undefined");
+        dbglog("printer_platform is undefined\n");
         return false;
     }
     for (unsigned int i = 0; i < sizeof(pcl3_print_modes_table) / sizeof(pcl3_print_modes_table[0]); i++)
@@ -265,7 +265,7 @@ bool Pcl3::selectPrintMode()
 	    return selectPrintMode(i);
 	}
     }
-    dbglog("Unsupported printer_platform: %s", m_pJA->printer_platform);
+    dbglog("Unsupported printer_platform: %s\n", m_pJA->printer_platform);
     return false;
 }
 

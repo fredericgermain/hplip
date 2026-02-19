@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 # Author: Don Welch
 #
 
-from __future__ import generators
+
 
 # Std Lib
 import sys
@@ -27,8 +27,8 @@ import os
 import os.path
 import time
 import threading
-import Queue
-from cStringIO import StringIO
+from base.sixext.moves import queue
+from io import StringIO
 
 # Local
 from base.g import *
@@ -60,12 +60,12 @@ class PMLCopyDevice(device.Device):
     def copy(self, num_copies=1, contrast=0, reduction=100,
              quality=pml.COPIER_QUALITY_NORMAL, 
              fit_to_page=pml.COPIER_FIT_TO_PAGE_ENABLED,
-             scan_style=SCAN_STYLE_FLATBED,
+             scan_src=SCAN_SRC_FLATBED,
              update_queue=None, event_queue=None): 
 
         if not self.isCopyActive():
             self.copy_thread = PMLCopyThread(self, num_copies, contrast, reduction, quality, 
-                                             fit_to_page, scan_style, update_queue, event_queue)
+                                             fit_to_page, scan_src, update_queue, event_queue)
             self.copy_thread.start()
             return True
         else:
@@ -73,13 +73,13 @@ class PMLCopyDevice(device.Device):
 
     def isCopyActive(self):
         if self.copy_thread is not None:
-            return self.copy_thread.isAlive()
+            return self.copy_thread.is_alive()
         else:
             return False
 
     def waitForCopyThread(self):
         if self.copy_thread is not None and \
-            self.copy_thread.isAlive():
+            self.copy_thread.is_alive():
 
             self.copy_thread.join()
 
@@ -87,7 +87,7 @@ class PMLCopyDevice(device.Device):
 
 class PMLCopyThread(threading.Thread):
     def __init__(self, dev, num_copies, contrast, reduction, quality, 
-                 fit_to_page, scan_style, 
+                 fit_to_page, scan_src, 
                  update_queue=None, event_queue=None):
 
         threading.Thread.__init__(self)
@@ -97,7 +97,7 @@ class PMLCopyThread(threading.Thread):
         self.reduction = reduction
         self.quality = quality
         self.fit_to_page = fit_to_page
-        self.scan_style = scan_style
+        self.scan_src = scan_src
         self.event_queue = event_queue
         self.update_queue = update_queue
         self.prev_update = ''
@@ -223,7 +223,7 @@ class PMLCopyThread(threading.Thread):
                     self.dev.setPML(pml.OID_COPIER_JOB_QUALITY, self.quality)
 
                     # fit_to_page
-                    if self.scan_style == SCAN_STYLE_FLATBED:
+                    if self.scan_src == SCAN_SRC_FLATBED:
                         self.dev.setPML(pml.OID_COPIER_JOB_FIT_TO_PAGE, self.fit_to_page)
 
                 else: # AiO
@@ -369,7 +369,7 @@ class PMLCopyThread(threading.Thread):
                 if event == COPY_CANCELED:
                     canceled = True
                     log.debug("Cancel pressed!")
-            except Queue.Empty:
+            except queue.Empty:
                 break
 
         return canceled

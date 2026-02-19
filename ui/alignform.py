@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 # Local
 from base.g import *
-from ui_utils import load_pixmap
+from .ui_utils import load_pixmap
 
 # Qt
 from qt import *
@@ -71,11 +71,11 @@ class AlignForm(QDialog):
         ChoiceLayout = QHBoxLayout(None,0,6,"ChoiceLayout")
 
         for x in range(1, choice_count+1):
-            exec 'self.radioButton%d = QRadioButton( self.buttonGroup, "radioButton%d" )' % (x, x) 
-            exec 'self.radioButton%d.setText( "%s%d" )' % (x, line_id, x) 
+            exec('self.radioButton%d = QRadioButton( self.buttonGroup, "radioButton%d" )' % (x, x)) 
+            exec('self.radioButton%d.setText( "%s%d" )' % (x, line_id, x)) 
             if x == mid_point:
-                exec 'self.radioButton%d.setChecked( 1 )' % x
-            exec 'ChoiceLayout.addWidget( self.radioButton%d )' % x
+                exec('self.radioButton%d.setChecked( 1 )' % x)
+            exec('ChoiceLayout.addWidget( self.radioButton%d )' % x)
 
         buttonGroupLayout.addMultiCellLayout(ChoiceLayout, 1, 1, 0, 1)
 

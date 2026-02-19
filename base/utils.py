@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2009 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2018 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,16 +17,18 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 #
-# Author: Don Welch
+# Author: Don Welch, Naga Samrat Chowdary Narla, Goutam Kodu, Amarnath Chitumalla
 #
 # Thanks to Henrique M. Holschuh <hmh@debian.org> for various security patches
 #
 
-from __future__ import generators
+
 
 # Std Lib
 import sys
 import os
+from subprocess import Popen, PIPE
+import grp
 import fnmatch
 import tempfile
 import socket
@@ -36,13 +39,20 @@ import fcntl
 import errno
 import stat
 import string
-import commands # TODO: Replace with subprocess (commands is deprecated in Python 3.0)
-import cStringIO
+import glob
 import re
-import xml.parsers.expat as expat
-import getpass
+import datetime
+from .g import *
 import locale
-import htmlentitydefs
+from .sixext.moves import html_entities, urllib2_request, urllib2_parse, urllib2_error
+from .sixext import PY3, to_unicode, to_bytes_utf8, to_string_utf8, BytesIO, StringIO, subprocess
+from . import os_utils
+import importlib
+try:
+    import xml.parsers.expat as expat
+    xml_expat_avail = True
+except ImportError:
+    xml_expat_avail = False
 
 try:
     import platform
@@ -50,15 +60,133 @@ try:
 except ImportError:
     platform_avail = False
 
+try:
+    import dbus
+    from dbus import SystemBus, lowlevel, SessionBus
+    dbus_avail=True
+except ImportError:
+    dbus_avail=False
+
+import hashlib
+
+def get_checksum(s):
+    return hashlib.sha256(s).hexdigest()
+
+
+
+
 # Local
-from g import *
-from codes import *
-import pexpect
+from .g import *
+from .codes import *
+from . import pexpect
+
 
 BIG_ENDIAN = 0
 LITTLE_ENDIAN = 1
 
+RMDIR="rm -rf"
+RM="rm -f"
 
+DBUS_SERVICE='com.hplip.StatusService'
+
+HPLIP_WEB_SITE ="https://developers.hp.com/hp-linux-imaging-and-printing/index.html"
+HTTP_CHECK_TARGET = "http://www.hp.com"
+PING_CHECK_TARGET = "www.hp.com"
+
+ERROR_NONE = 0
+ERROR_FILE_CHECKSUM = 1
+ERROR_UNABLE_TO_RECV_KEYS =2 
+ERROR_DIGITAL_SIGN_BAD =3
+
+MAJ_VER = sys.version_info[0]
+MIN_VER = sys.version_info[1]
+
+EXPECT_WORD_LIST = [
+    pexpect.EOF, # 0
+    pexpect.TIMEOUT, # 1
+    u"Continue?", # 2 (for zypper)
+    u"passwor[dt]:", # en/de/it/ru
+    u"kennwort", # de?
+    u"password for", # en
+    u"mot de passe", # fr
+    u"contraseña", # es
+    u"palavra passe", # pt
+    u"口令", # zh
+    u"wachtwoord", # nl
+    u"heslo", # czech
+    u"密码",
+    u"Lösenord", #sv
+]
+
+# Define the dictionary to map various distro names to standard names
+distro_name_dict = {
+    "unknown": "unknown",
+    "mepis": "mepis",
+    "debian": "debian",
+    "suse": "suse",
+    "opensuse": "suse",
+    "mandriva": "mandriva",
+    "fedora": "fedora",
+    "redhat": "rhel",
+    "rhel": "rhel",
+    "redhatenterprise" : "rhel",
+    "red hat enterprise linux": "rhel",
+    "slackware": "slackware",
+    "gentoo": "gentoo",
+    "redflag": "redflag",
+    "ubuntu": "ubuntu",
+    "xandros": "xandros",
+    "freebsd": "freebsd",
+    "linspire": "linspire",
+    "ark": "ark",
+    "pclinuxos": "pclinuxos",
+    "centos": "centos",
+    "igos": "igos",
+    "linuxmint": "linuxmint",
+    "mint": "linuxmint",
+    "linpus": "linpus",
+    "gos": "gos",
+    "boss": "boss",
+    "lfs": "lfs",
+    "manjarolinux": "manjarolinux",
+    "manjaro": "manjarolinux",
+    "zorin": "zorin",
+    "mxlinux": "mxlinux",
+    "mx": "mxlinux",
+    "elementary": "elementary",
+    "elementaryos": "elementary"
+}
+
+EXPECT_LIST = []
+for s in EXPECT_WORD_LIST:
+    try:
+        p = re.compile(s, re.I)
+    except TypeError:
+        EXPECT_LIST.append(s)
+    else:
+        EXPECT_LIST.append(p)
+
+
+def get_cups_systemgroup_list():
+    lis = []
+    try:
+        fp=open('/etc/cups/cupsd.conf')
+    except IOError:
+        try:
+            if "root" != grp.getgrgid(os.stat('/etc/cups/cupsd.conf').st_gid).gr_name:
+                return [grp.getgrgid(os.stat('/etc/cups/cupsd.conf').st_gid).gr_name]
+        except OSError:
+            return lis
+
+    try:
+        lis = ((re.findall(r'SystemGroup [\w* ]*',fp.read()))[0].replace('SystemGroup ','')).split(' ')
+    except IndexError:
+        return lis
+
+    if 'root' in lis:
+        lis.remove('root')
+    fp.close()
+    return lis
 
 def lock(f):
     log.debug("Locking: %s" % f.name)
@@ -109,12 +237,17 @@ def lock_app(application, suppress_error=False):
 #xml_basename_pat = re.compile(r"""HPLIP-(\d*)_(\d*)_(\d*).xml""", re.IGNORECASE)
 
 
-def Translator(frm='', to='', delete='', keep=None):
-    allchars = string.maketrans('','')
-
+def Translator(frm=to_bytes_utf8(''), to=to_bytes_utf8(''), delete=to_bytes_utf8(''), keep=None):  #Need Revisit
     if len(to) == 1:
         to = to * len(frm)
-    trans = string.maketrans(frm, to)
+
+    if PY3:
+        data_types = bytes
+    else:
+        data_types = string
+    
+    allchars = data_types.maketrans(to_bytes_utf8(''), to_bytes_utf8(''))
+    trans = data_types.maketrans(frm, to)
 
     if keep is not None:
         delete = allchars.translate(allchars, keep.translate(allchars, delete))
@@ -125,13 +258,21 @@ def Translator(frm='', to='', delete='', keep=None):
     return callable
 
 
+def list_to_string(lis):
+    if len(lis) == 0:
+        return ""
+    if len(lis) == 1:
+        return str("\""+lis[0]+"\"")
+    if len(lis) >= 1:
+        return "\""+"\", \"".join(lis)+"\" and \""+str(lis.pop())+"\""
+
 def to_bool_str(s, default='0'):
     """ Convert an arbitrary 0/1/T/F/Y/N string to a normalized string 0/1."""
     if isinstance(s, str) and s:
         if s[0].lower() in ['1', 't', 'y']:
-            return u'1'
+            return to_unicode('1')
         elif s[0].lower() in ['0', 'f', 'n']:
-            return u'0'
+            return to_unicode('0')
 
     return default
 
@@ -148,6 +289,7 @@ def to_bool(s, default=False):
     return default
 
 
+# Compare with os.walk()
 def walkFiles(root, recurse=True, abs_paths=False, return_folders=False, pattern='*', path=None):
     if path is None:
         path = root
@@ -155,7 +297,8 @@ def walkFiles(root, recurse=True, abs_paths=False, return_folders=False, pattern
     try:
         names = os.listdir(root)
     except os.error:
-        raise StopIteration
+       #raise StopIteration
+        return
 
     pattern = pattern or '*'
     pat_list = pattern.split(';')
@@ -185,13 +328,13 @@ def walkFiles(root, recurse=True, abs_paths=False, return_folders=False, pattern
 def is_path_writable(path):
     if os.path.exists(path):
         s = os.stat(path)
-        mode = s[stat.ST_MODE] & 0777
+        mode = s[stat.ST_MODE] & 0o777
 
-        if mode & 02:
+        if mode & 0o2:
             return True
-        elif s[stat.ST_GID] == os.getgid() and mode & 020:
+        elif s[stat.ST_GID] == os.getgid() and mode & 0o20:
             return True
-        elif s[stat.ST_UID] == os.getuid() and mode & 0200:
+        elif s[stat.ST_UID] == os.getuid() and mode & 0o200:
             return True
 
     return False
@@ -217,7 +360,7 @@ class TextFormatter:
         if len(textlist) != len(self.columns):
             log.error("Formatter: Number of text items does not match columns")
             return
-        for text, column in map(None, textlist, self.columns):
+        for text, column in list(map(lambda *x: x, textlist, self.columns)):
             column.wrap(text)
             numlines = max(numlines, len(column.lines))
         complines = [''] * numlines
@@ -232,7 +375,7 @@ class TextFormatter:
 class Column:
 
     def __init__(self, width=78, alignment=TextFormatter.LEFT, margin=0):
-        self.width = width
+        self.width = int(width)
         self.alignment = alignment
         self.margin = margin
         self.lines = []
@@ -249,7 +392,7 @@ class Column:
         self.lines = []
         words = []
         for word in text.split():
-            if word <= self.width:
+            if word <= str(self.width):
                 words.append(word)
             else:
                 for i in range(0, len(word), self.width):
@@ -355,14 +498,14 @@ class RingBufferFull:
 
 def sort_dict_by_value(d):
     """ Returns the keys of dictionary d sorted by their values """
-    items=d.items()
+    items=list(d.items())
     backitems=[[v[1],v[0]] for v in items]
     backitems.sort()
     return [backitems[i][1] for i in range(0, len(backitems))]
 
 
 def commafy(val):
-    return unicode(locale.format("%d", val, grouping=True))
+    return locale.format("%s", val, grouping=True)
 
 
 def format_bytes(s, show_bytes=False):
@@ -370,19 +513,19 @@ def format_bytes(s, show_bytes=False):
         return ''.join([commafy(s), ' B'])
     elif 1024 < s < 1048576:
         if show_bytes:
-            return ''.join([unicode(round(s/1024.0, 1)) , u' KB (',  commafy(s), ')'])
+            return ''.join([to_unicode(round(s/1024.0, 1)) , to_unicode(' KB ('),  commafy(s), ')'])
         else:
-            return ''.join([unicode(round(s/1024.0, 1)) , u' KB'])
+            return ''.join([to_unicode(round(s/1024.0, 1)) , to_unicode(' KB')])
     elif 1048576 < s < 1073741824:
         if show_bytes:
-            return ''.join([unicode(round(s/1048576.0, 1)), u' MB (',  commafy(s), ')'])
+            return ''.join([to_unicode(round(s/1048576.0, 1)), to_unicode(' MB ('),  commafy(s), ')'])
         else:
-            return ''.join([unicode(round(s/1048576.0, 1)), u' MB'])
+            return ''.join([to_unicode(round(s/1048576.0, 1)), to_unicode(' MB')])
     else:
         if show_bytes:
-            return ''.join([unicode(round(s/1073741824.0, 1)), u' GB (',  commafy(s), ')'])
+            return ''.join([to_unicode(round(s/1073741824.0, 1)), to_unicode(' GB ('),  commafy(s), ')'])
         else:
-            return ''.join([unicode(round(s/1073741824.0, 1)), u' GB'])
+            return ''.join([to_unicode(round(s/1073741824.0, 1)), to_unicode(' GB')])
 
 
 
@@ -391,14 +534,19 @@ try:
 except AttributeError:
     def make_temp_file(suffix='', prefix='', dir='', text=False): # pre-2.3
         path = tempfile.mktemp(suffix)
-        fd = os.open(path, os.O_RDWR|os.O_CREAT|os.O_EXCL, 0700)
+        fd = os.open(path, os.O_RDWR|os.O_CREAT|os.O_EXCL, 0o700)
         return ( os.fdopen( fd, 'w+b' ), path )
 
 
 
 def which(command, return_full_path=False):
-    path = os.getenv('PATH').split(':')
+    path=[]
+    path_val = os.getenv('PATH')
+    if path_val:
+        path = path_val.split(':')
 
+    path.append('/usr/bin')
+    path.append('/usr/local/bin')
     # Add these paths for Fedora
     path.append('/sbin')
     path.append('/usr/sbin')
@@ -516,6 +664,11 @@ class UserSettings(object): # Note: Deprecated after 2.8.8 in Qt4 (see ui4/ui_ut
         self.cmd_copy = user_conf.get('commands', 'cpy', self.cmd_copy)
         self.cmd_fax = user_conf.get('commands', 'fax', self.cmd_fax)
         self.cmd_fab = user_conf.get('commands', 'fab', self.cmd_fab)
+
+        self.upgrade_notify= to_bool(user_conf.get('upgrade', 'notify_upgrade', '0'))
+        self.upgrade_last_update_time = int(user_conf.get('upgrade','last_upgraded_time', '0'))
+        self.upgrade_pending_update_time =int(user_conf.get('upgrade', 'pending_upgrade_time', '0'))
+        self.latest_available_version=str(user_conf.get('upgrade', 'latest_available_version',''))
         self.debug()
 
     def debug(self):
@@ -528,6 +681,10 @@ class UserSettings(object): # Note: Deprecated after 2.8.8 in Qt4 (see ui4/ui_ut
         log.debug("Auto refresh: %s" % self.auto_refresh)
         log.debug("Auto refresh rate: %s" % self.auto_refresh_rate)
         log.debug("Auto refresh type: %s" % self.auto_refresh_type)
+        log.debug("Upgrade notification:%d"  %self.upgrade_notify)
+        log.debug("Last Installed time:%d" %self.upgrade_last_update_time)
+        log.debug("Next scheduled installation time:%d" % self.upgrade_pending_update_time)
+
 
     def save(self):
         log.debug("Saving user settings...")
@@ -539,6 +696,11 @@ class UserSettings(object): # Note: Deprecated after 2.8.8 in Qt4 (see ui4/ui_ut
         user_conf.set('refresh', 'enable',self.auto_refresh)
         user_conf.set('refresh', 'rate', self.auto_refresh_rate)
         user_conf.set('refresh', 'type', self.auto_refresh_type)
+        user_conf.set('upgrade', 'notify_upgrade', self.upgrade_notify)
+        user_conf.set('upgrade','last_upgraded_time', self.upgrade_last_update_time)
+        user_conf.set('upgrade', 'pending_upgrade_time', self.upgrade_pending_update_time)
+        user_conf.set('upgrade', 'latest_available_version', self.latest_available_version)
+
         self.debug()
 
 
@@ -582,9 +744,15 @@ def canEnterGUIMode4(): # qt4
         log.warn("No display found.")
         return False
 
-    elif not checkPyQtImport4():
-        log.warn("Qt/PyQt 4 initialization failed.")
-        return False
+    # elif not checkPyQtImport4():
+    #     log.warn("Qt4/PyQt 4 initialization failed.")
+    #     return False
+    else:
+        try:
+            checkPyQtImport45()
+        except ImportError as e:
+            log.warn(e)
+            return False
 
     return True
 
@@ -593,6 +761,7 @@ def checkPyQtImport(): # qt3
     # PyQt
     try:
         import qt
+        import ui
     except ImportError:
         if os.getenv('DISPLAY') and os.getenv('STARTED_FROM_MENU'):
             no_qt_message_gtk()
@@ -642,10 +811,24 @@ def checkPyQtImport(): # qt3
 def checkPyQtImport4():
     try:
         import PyQt4
+        import ui4
     except ImportError:
-        return False
+        import PyQt5
+        import ui5
     else:
-        return True
+        log.debug("HPLIP is not installed properly or is installed without graphical support. Please reinstall HPLIP again")
+        return False
+    return True
+
+# def checkPyQtImport5():
+#     try:
+#         import PyQt5
+#         import ui5
+#     except ImportError:
+#         log.error("HPLIP is not installed properly or is installed without graphical support PyQt5. Please reinstall HPLIP")
+#         return False
+#     else:
+#         return True
 
 
 try:
@@ -692,7 +875,10 @@ except ImportError:
                     }
             cls.pattern = re.compile(pattern, re.IGNORECASE | re.VERBOSE)
 
-
+    # if PY3:
+    #     class Template(metaclass=_TemplateMetaclass):
+    #         """A string class for supporting $-substitutions."""
+    # else:
     class Template:
         """A string class for supporting $-substitutions."""
         __metaclass__ = _TemplateMetaclass
@@ -791,13 +977,19 @@ def cat(s):
 
     return Template(s).substitute(sys._getframe(1).f_globals, **locals)
 
-
-identity = string.maketrans('','')
-unprintable = identity.translate(identity, string.printable)
+if PY3:
+    identity = bytes.maketrans(b'', b'')
+    unprintable = identity.translate(identity, string.printable.encode('utf-8'))
+else:
+    identity = string.maketrans('','')
+    unprintable = identity.translate(identity, string.printable)
 
 
 def printable(s):
-    return s.translate(identity, unprintable)
+    if s:
+        return s.translate(identity, unprintable)
+    else:
+        return ""
 
 
 def any(S,f=lambda x:x):
@@ -811,14 +1003,15 @@ def all(S,f=lambda x:x):
         if not f(x): return False
     return True
 
-
-BROWSERS = ['firefox', 'mozilla', 'konqueror', 'galeon', 'skipstone'] # in preferred order
-BROWSER_OPTS = {'firefox': '-new-window', 'mozilla' : '', 'konqueror': '', 'galeon': '-w', 'skipstone': ''}
+BROWSERS = ['firefox', 'mozilla', 'konqueror', 'epiphany', 'skipstone'] # in preferred order
+BROWSER_OPTS = {'firefox': '-new-tab', 'mozilla': '', 'konqueror': '', 'epiphany': '--new-tab', 'skipstone': ''}
 
 
 def find_browser():
     if platform_avail and platform.system() == 'Darwin':
         return "open"
+    elif which("xdg-open"):
+        return "xdg-open"
     else:
         for b in BROWSERS:
             if which(b):
@@ -830,19 +1023,19 @@ def find_browser():
 def openURL(url, use_browser_opts=True):
     if platform_avail and platform.system() == 'Darwin':
         cmd = 'open "%s"' % url
-        log.debug(cmd)
-        os.system(cmd)
+        os_utils.execute(cmd)
+    elif which("xdg-open"):
+        cmd = 'xdg-open "%s"' % url
+        os_utils.execute(cmd)
     else:
         for b in BROWSERS:
-            bb = which(b)
+            bb = which(b, return_full_path='True')
             if bb:
-                bb = os.path.join(bb, b)
                 if use_browser_opts:
                     cmd = """%s %s "%s" &""" % (bb, BROWSER_OPTS[b], url)
                 else:
                     cmd = """%s "%s" &""" % (bb, url)
-                log.debug(cmd)
-                os.system(cmd)
+                os_utils.execute(cmd)
                 break
         else:
             log.warn("Unable to open URL: %s" % url)
@@ -885,12 +1078,12 @@ class XMLToDictParser:
 
     def startElement(self, name, attrs):
         #print "START:", name, attrs
-        self.stack.append(unicode(name).lower())
-        self.last_start = unicode(name).lower()
+        self.stack.append(to_unicode(name).lower())
+        self.last_start = to_unicode(name).lower()
 
         if len(attrs):
             for a in attrs:
-                self.stack.append(unicode(a).lower())
+                self.stack.append(to_unicode(a).lower())
                 self.addData(attrs[a])
                 self.stack.pop()
 
@@ -902,18 +1095,18 @@ class XMLToDictParser:
         self.stack.pop()
 
     def charData(self, data):
-        data = unicode(data).strip()
+        data = to_unicode(data).strip()
 
         if data and self.stack:
             self.addData(data)
 
     def addData(self, data):
-        #print "DATA:", data
+        #print("DATA:%s" % data)
         self.last_start = ''
         try:
             data = int(data)
         except ValueError:
-            data = unicode(data)
+            data = to_unicode(data)
 
         stack_str = '-'.join(self.stack)
         stack_str_0 = '-'.join([stack_str, '0'])
@@ -929,9 +1122,9 @@ class XMLToDictParser:
                 j = 2
                 while True:
                     try:
-                        self.data['-'.join([stack_str, unicode(j)])]
+                        self.data['-'.join([stack_str, to_unicode(j)])]
                     except KeyError:
-                        self.data['-'.join([stack_str, unicode(j)])] = data
+                        self.data['-'.join([stack_str, to_unicode(j)])] = data
                         break
                     j += 1
 
@@ -942,12 +1135,120 @@ class XMLToDictParser:
 
 
     def parseXML(self, text):
-        parser = expat.ParserCreate()
-        parser.StartElementHandler = self.startElement
-        parser.EndElementHandler = self.endElement
-        parser.CharacterDataHandler = self.charData
-        parser.Parse(text.encode('utf-8'), True)
+        if xml_expat_avail:
+            parser = expat.ParserCreate()
+
+            parser.StartElementHandler = self.startElement
+            parser.EndElementHandler = self.endElement
+            parser.CharacterDataHandler = self.charData
+
+            parser.Parse(text, True)
+
+        else:
+            log.error("Failed to import expat module , check python-xml/python3-xml package installation.")
+
         return self.data
+
+
+class Element:
+    def __init__(self,name,attributes):
+        self.name = name
+        self.attributes = attributes
+        self.chardata = ''
+        self.children = []
+
+    def AddChild(self,element):
+        self.children.append(element)
+
+    def getAttribute(self,key):
+        return self.attributes.get(key)
+
+    def getData(self):
+        return self.chardata
+
+    def getElementsByTagName(self,name='',ElementNode=None):
+        if ElementNode:
+            Children_list = ElementNode.children
+        else:
+            Children_list = self.children
+        if not name:
+            return self.children
+        else:
+            elements = []
+            for element in Children_list:
+                if element.name == name:
+                    elements.append(element)
+
+                rec_elements = self.getElementsByTagName (name,element)
+                for a in rec_elements:
+                    elements.append(a)
+            return elements
+
+    def getChildElements(self,name=''):
+        if not name:
+            return self.children
+        else:
+            elements = []
+            for element in self.children:
+                if element.name == name:
+                    elements.append(element)
+            return elements
+
+    def toString(self, level=0):
+        retval = " " * level
+        retval += "<%s" % self.name
+        for attribute in self.attributes:
+            retval += " %s=\"%s\"" % (attribute, self.attributes[attribute])
+        c = ""
+        for child in self.children:
+            c += child.toString(level+1)
+        if c == "":
+            if self.chardata:
+                retval += ">"+self.chardata + ("</%s>" % self.name)
+            else:
+                retval += "/>"
+        else:
+            retval += ">" + c + ("</%s>" % self.name)
+        return retval
+
+class  extendedExpat:
+    def __init__(self):
+        self.root = None
+        self.nodeStack = []
+
+    def StartElement_EE(self,name,attributes):
+        element = Element(name, attributes)
+
+        if len(self.nodeStack) > 0:
+            parent = self.nodeStack[-1]
+            parent.AddChild(element)
+        else:
+            self.root = element
+        self.nodeStack.append(element)
+
+    def EndElement_EE(self,name):
+        self.nodeStack = self.nodeStack[:-1]
+
+    def charData_EE(self,data):
+        if data:
+            element = self.nodeStack[-1]
+            element.chardata += data
+            return
+
+    def Parse(self,xmlString):
+        if xml_expat_avail:
+            Parser = expat.ParserCreate()
+
+            Parser.StartElementHandler = self.StartElement_EE
+            Parser.EndElementHandler = self.EndElement_EE
+            Parser.CharacterDataHandler = self.charData_EE
+
+            Parser.Parse(xmlString, True)
+        else:
+            log.error("Failed to import expat module , check python-xml/python3-xml package installation.")
+
+        return self.root
+
 
 
 def dquote(s):
@@ -958,7 +1259,7 @@ def dquote(s):
 if sys.hexversion < 0x020203f0:
     def xlstrip(s, chars=' '):
         i = 0
-        for c, i in zip(s, range(len(s))):
+        for c, i in zip(s, list(range(len(s)))):
             if c not in chars:
                 break
 
@@ -976,9 +1277,9 @@ if sys.hexversion < 0x020203f0:
         return xreverse(xlstrip(xreverse(xlstrip(s, chars)), chars))
 
 else:
-    xlstrip = string.lstrip
-    xrstrip = string.rstrip
-    xstrip = string.strip
+    xlstrip = str.lstrip
+    xrstrip = str.rstrip
+    xstrip = str.strip
 
 
 def getBitness():
@@ -1002,65 +1303,88 @@ def getEndian():
         return LITTLE_ENDIAN
 
 
-def get_password():
-    return getpass.getpass("Enter password: ")
+#
+# Function: run()
+#   Note:- to run su/sudo commands, caller needs to pass passwordObj.
+#          password object can be created from base.password.py
 
-def get_password_ui():
-    fp = open("/etc/hp/hplip.conf", "r")
-    qt = "qt3"
-    for line in fp:
-        if string.find(line, "qt4") is not -1 and string.find(line, "yes") is not -1:
-            qt = "qt4"
-    fp.close()
-    if qt is "qt4":
-        from ui4.setupdialog import showPasswordUI
-        username, password = showPasswordUI("Your printer requires to install HP proprietary plugin\nPlease enter root/superuser password to continue")
-    if qt is "qt3":
-        from ui.setupform import showPasswordUI
-        username, password = showPasswordUI("Your priter requires to install HP proprietary plugin\nPlease enter root/superuser password to continue")
-    return password
+def run(cmd, passwordObj = None, pswd_msg='', log_output=True, spinner=True, timeout=1):
+    import io
+    output = io.StringIO()
 
-def run(cmd, log_output=True, password_func=get_password, timeout=1):
-    output = cStringIO.StringIO()
+    pwd_prompt_str = ""
+    if passwordObj and ('su' in cmd or 'sudo' in cmd) and os.geteuid() != 0:
+        pwd_prompt_str = passwordObj.getPasswordPromptString()
+        log.debug("cmd = %s pwd_prompt_str = [%s]"%(cmd, pwd_prompt_str))
+        if(pwd_prompt_str == ""):
+            passwd = passwordObj.getPassword(pswd_msg, 0)
+            pwd_prompt_str = passwordObj.getPasswordPromptString()
+            log.debug("pwd_prompt_str2 = [%s]"%(pwd_prompt_str))
+            if(passwd == ""):
+               return 127, ""
 
     try:
-        child = pexpect.spawn(cmd, timeout=timeout)
-    except pexpect.ExceptionPexpect:
+        child = pexpect.spawnu(cmd, timeout=timeout)
+    except pexpect.ExceptionPexpect as e:
         return -1, ''
 
     try:
+        pswd_queried_cnt = 0
         while True:
-            update_spinner()
-            i = child.expect(["[pP]assword:", pexpect.EOF, pexpect.TIMEOUT])
+            if spinner:
+                update_spinner()
 
-            if child.before:
-                output.write(child.before)
-                if log_output:
-                    log.debug(child.before)
-
-            if i == 0: # Password:
-                if password_func is not None:
-                    if password_func == "get_password_ui":
-                        child.sendline(get_password_ui())
-                    else:
-                        child.sendline(password_func())
-                else:
-                    child.sendline(get_password())
-
-            elif i == 1: # EOF
-                break
-
-            elif i == 2: # TIMEOUT
+            try:
+                i = child.expect(EXPECT_LIST)
+            except Exception:
                 continue
 
+            if child.before:
+                if(pwd_prompt_str and pwd_prompt_str not in EXPECT_LIST):
+                    log.debug("Adding %s to EXPECT LIST"%pwd_prompt_str)
+                    try:
+                        p = re.compile(pwd_prompt_str, re.I)
+                    except TypeError:
+                        EXPECT_LIST.append(pwd_prompt_str)
+                    else:
+                        EXPECT_LIST.append(p)
+                        EXPECT_LIST.append(pwd_prompt_str)
 
-    except Exception, e:
+                try:
+                    output.write(child.before)
+                    if log_output:
+                        log.debug(child.before)
+                except Exception:
+                    pass
+
+            if i == 0: # EOF
+                break
+
+            elif i == 1: # TIMEOUT
+                continue
+
+            elif i == 2:    # zypper
+                child.sendline("YES")
+
+            else: # Password:
+                if not passwordObj :
+                    raise Exception("password Object(i.e. passwordObj) is not valid")
+
+                child.sendline(passwordObj.getPassword(pswd_msg, pswd_queried_cnt))
+                pswd_queried_cnt += 1
+
+    except Exception as e:
         log.error("Exception: %s" % e)
+    if spinner:
+        cleanup_spinner()
+    try:
+        child.close()
+    except pexpect.ExceptionPexpect as e:
+        pass
 
-    cleanup_spinner()
-    child.close()
 
     return child.exitstatus, output.getvalue()
+
 
 
 def expand_range(ns): # ns -> string repr. of numeric range, e.g. "1-4, 7, 9-12"
@@ -1070,34 +1394,34 @@ def expand_range(ns): # ns -> string repr. of numeric range, e.g. "1-4, 7, 9-12"
        u"1-4, 7, 9-12" --> [1,2,3,4,7,9,10,11,12]
     """
     fs = []
-    for n in ns.split(u','):
+    for n in ns.split(to_unicode(',')):
         n = n.strip()
         r = n.split('-')
         if len(r) == 2:  # expand name with range
-            h = r[0].rstrip(u'0123456789')  # header
+            h = r[0].rstrip(to_unicode('0123456789'))  # header
             r[0] = r[0][len(h):]
              # range can't be empty
             if not (r[0] and r[1]):
-                raise ValueError, 'empty range: ' + n
+                raise ValueError('empty range: ' + n)
              # handle leading zeros
-            if r[0] == u'0' or r[0][0] != u'0':
+            if r[0] == to_unicode('0') or to_unicode(r[0][0]) != '0':
                 h += '%d'
             else:
                 w = [len(i) for i in r]
                 if w[1] > w[0]:
-                   raise ValueError, 'wide range: ' + n
-                h += u'%%0%dd' % max(w)
+                   raise ValueError('wide range: ' + n)
+                h += to_unicode('%%0%dd') % max(w)
              # check range
             r = [int(i, 10) for i in r]
             if r[0] > r[1]:
-               raise ValueError, 'bad range: ' + n
+               raise ValueError('bad range: ' + n)
             for i in range(r[0], r[1]+1):
                 fs.append(h % i)
         else:  # simple name
             fs.append(n)
 
      # remove duplicates
-    fs = dict([(n, i) for i, n in enumerate(fs)]).keys()
+    fs = list(dict([(n, i) for i, n in enumerate(fs)]).keys())
      # convert to ints and sort
     fs = [int(x) for x in fs if x]
     fs.sort()
@@ -1120,17 +1444,35 @@ def collapse_range(x): # x --> sorted list of ints
             r = True
         else:
             if r:
-                s.append(u'-%s,%s' % (c,i))
+                s.append(to_unicode('-%s,%s') % (c,i))
                 r = False
             else:
-                s.append(u',%s' % i)
+                s.append(to_unicode(',%s') % i)
 
         c = i
 
     if r:
-        s.append(u'-%s' % i)
+        s.append(to_unicode('-%s') % i)
 
     return ''.join(s)
+
+def createBBSequencedFilename(basename, ext, dir=None, digits=3):
+    if dir is None:
+        dir = os.getcwd()
+
+    m = 0
+    for f in walkFiles(dir, recurse=False, abs_paths=False, return_folders=False, pattern='*', path=None):
+        r, e = os.path.splitext(f)
+
+        if r.startswith(basename) and ext == e:
+            try:
+                i = int(r[len(basename):])
+            except ValueError:
+                continue
+            else:
+                m = max(m, i)
+
+    return os.path.join(dir, "%s%0*d%s" % (basename, digits, m+1, ext))
 
 
 def createSequencedFilename(basename, ext, dir=None, digits=3):
@@ -1151,13 +1493,12 @@ def createSequencedFilename(basename, ext, dir=None, digits=3):
 
     return os.path.join(dir, "%s%0*d%s" % (basename, digits, m+1, ext))
 
-
-def validate_language(lang, default='en_US'):
+def validate_language(lang):
     if lang is None:
-        loc, encoder = locale.getdefaultlocale()
+        loc = os_utils.getSystemLocale()
     else:
         lang = lang.lower().strip()
-        for loc, ll in supported_locales.items():
+        for loc, ll in list(supported_locales.items()):
             if lang in ll:
                 break
         else:
@@ -1176,7 +1517,7 @@ def gen_random_uuid():
         uuidgen = which("uuidgen")
         if uuidgen:
             uuidgen = os.path.join(uuidgen, "uuidgen")
-            return commands.getoutput(uuidgen) # TODO: Replace with subprocess (commands is deprecated in Python 3.0)
+            return subprocess.getoutput(uuidgen)
         else:
             return ''
 
@@ -1272,7 +1613,7 @@ def mixin(cls):
  # ------------------------- Usage Help
 USAGE_OPTIONS = ("[OPTIONS]", "", "heading", False)
 USAGE_LOGGING1 = ("Set the logging level:", "-l<level> or --logging=<level>", 'option', False)
-USAGE_LOGGING2 = ("", "<level>: none, info\*, error, warn, debug (\*default)", "option", False)
+USAGE_LOGGING2 = ("", r"<level>: none, info\*, error, warn, debug (\*default)", "option", False)
 USAGE_LOGGING3 = ("Run in debug mode:", "-g (same as option: -ldebug)", "option", False)
 USAGE_LOGGING_PLAIN = ("Output plain text only:", "-t", "option", False)
 USAGE_ARGS = ("[PRINTER|DEVICE-URI]", "", "heading", False)
@@ -1280,15 +1621,15 @@ USAGE_ARGS2 = ("[PRINTER]", "", "heading", False)
 USAGE_DEVICE = ("To specify a device-URI:", "-d<device-uri> or --device=<device-uri>", "option", False)
 USAGE_PRINTER = ("To specify a CUPS printer:", "-p<printer> or --printer=<printer>", "option", False)
 USAGE_BUS1 = ("Bus to probe (if device not specified):", "-b<bus> or --bus=<bus>", "option", False)
-USAGE_BUS2 = ("", "<bus>: cups\*, usb\*, net, bt, fw, par\* (\*defaults) (Note: bt and fw not supported in this release.)", 'option', False)
+USAGE_BUS2 = ("", r"<bus>: cups\*, usb\*, net, bt, fw, par\* (\*defaults) (Note: bt and fw not supported in this release.)", 'option', False)
 USAGE_HELP = ("This help information:", "-h or --help", "option", True)
 USAGE_SPACE = ("", "", "space", False)
 USAGE_EXAMPLES = ("Examples:", "", "heading", False)
 USAGE_NOTES = ("Notes:", "", "heading", False)
 USAGE_STD_NOTES1 = ("If device or printer is not specified, the local device bus is probed and the program enters interactive mode.", "", "note", False)
-USAGE_STD_NOTES2 = ("If -p\* is specified, the default CUPS printer will be used.", "", "note", False)
+USAGE_STD_NOTES2 = (r"If -p\* is specified, the default CUPS printer will be used.", "", "note", False)
 USAGE_SEEALSO = ("See Also:", "", "heading", False)
-USAGE_LANGUAGE = ("Set the language:", "-q <lang> or --lang=<lang>. Use -q? or --lang=? to see a list of available language codes.", "option", False)
+USAGE_LANGUAGE = ("Set the language:", "--loc=<lang> or --lang=<lang>. Use --loc=? or --lang=? to see a list of available language codes.", "option", False)
 USAGE_LANGUAGE2 = ("Set the language:", "--lang=<lang>. Use --lang=? to see a list of available language codes.", "option", False)
 USAGE_MODE = ("[MODE]", "", "header", False)
 USAGE_NON_INTERACTIVE_MODE = ("Run in non-interactive mode:", "-n or --non-interactive", "option", False)
@@ -1298,15 +1639,18 @@ USAGE_INTERACTIVE_MODE = ("Run in interactive mode:", "-i or --interactive", "op
 if sys_conf.get('configure', 'ui-toolkit', 'qt3') == 'qt3':
     USAGE_USE_QT3 = ("Use Qt3:",  "--qt3 (Default)",  "option",  False)
     USAGE_USE_QT4 = ("Use Qt4:",  "--qt4",  "option",  False)
-else:
+    USAGE_USE_QT5 = ("Use Qt5:",  "--qt5",  "option",  False)
+elif sys_conf.get('configure', 'ui-toolkit', 'qt4') == 'qt4':
     USAGE_USE_QT3 = ("Use Qt3:",  "--qt3",  "option",  False)
     USAGE_USE_QT4 = ("Use Qt4:",  "--qt4 (Default)",  "option",  False)
-
-
-
+    USAGE_USE_QT5 = ("Use Qt5:",  "--qt5",  "option",  False)
+elif sys_conf.get('configure', 'ui-toolkit', 'qt5') == 'qt5':
+    USAGE_USE_QT3 = ("Use Qt3:",  "--qt3",  "option",  False)
+    USAGE_USE_QT4 = ("Use Qt4:",  "--qt4",  "option",  False)
+    USAGE_USE_QT5 = ("Use Qt5:",  "--qt5 (Default)",  "option",  False)
 
 def ttysize(): # TODO: Move to base/tui
-    ln1 = commands.getoutput('stty -a').splitlines()[0]
+    ln1 = subprocess.getoutput('stty -a').splitlines()[0]
     vals = {'rows':None, 'columns':None}
     for ph in ln1.split(';'):
         x = ph.split()
@@ -1511,7 +1855,7 @@ encoding: utf8
 
     elif typ == 'man':
         log.info('.TH "%s" 1 "%s" Linux "User Manuals"' % (crumb, version))
-        log.info(".SH NAME\n%s \- %s" % (crumb, title))
+        log.info(r".SH NAME\n%s \- %s" % (crumb, title))
 
         for line in text_list:
             text1, text2, format, trailing_space = line
@@ -1526,7 +1870,8 @@ encoding: utf8
                 log.info(".B %s" % text1.replace('Usage:', ''))
 
             elif format == 'name':
-                log.info(".SH DESCRIPTION\n%s" % text1)
+                if text1:
+                    log.info(".SH DESCRIPTION\n%s" % text1)
 
             elif format in ('option', 'example', 'note'):
                 if text1:
@@ -1541,7 +1886,7 @@ encoding: utf8
                 log.info(text1)
 
         log.info(".SH AUTHOR")
-        log.info("HPLIP (Hewlett-Packard Linux Imaging and Printing) is an")
+        log.info("HPLIP (HP Linux Imaging and Printing) is an")
         log.info("HP developed solution for printing, scanning, and faxing with")
         log.info("HP inkjet and laser based printers in Linux.")
 
@@ -1553,7 +1898,7 @@ encoding: utf8
         log.info("contact the HPLIP Team.")
 
         log.info(".SH COPYRIGHT")
-        log.info("Copyright (c) 2001-9 Hewlett-Packard Development Company, L.P.")
+        log.info("Copyright (c) 2001-18 HP Development Company, L.P.")
         log.info(".LP")
         log.info("This software comes with ABSOLUTELY NO WARRANTY.")
         log.info("This is free software, and you are welcome to distribute it")
@@ -1572,7 +1917,7 @@ def log_title(program_name, version, show_ver=True): # TODO: Move to base/module
 
     log.info(log.bold("%s ver. %s" % (program_name, version)))
     log.info("")
-    log.info("Copyright (c) 2001-9 Hewlett-Packard Development Company, LP")
+    log.info("Copyright (c) 2001-18 HP Development Company, LP")
     log.info("This software comes with ABSOLUTELY NO WARRANTY.")
     log.info("This is free software, and you are welcome to distribute it")
     log.info("under certain conditions. See COPYING file for more details.")
@@ -1582,25 +1927,6 @@ def log_title(program_name, version, show_ver=True): # TODO: Move to base/module
 def ireplace(old, search, replace):
     regex = '(?i)' + re.escape(search)
     return re.sub(regex, replace, old)
-
-
-def su_sudo():
-    su_sudo_str = None
-
-    if which('kdesu'):
-        su_sudo_str = 'kdesu -- %s'
-
-    elif which('gnomesu'):
-        su_sudo_str = 'gnomesu -c "%s"'
-
-    elif which('gksu'):
-        su_sudo_str = 'gksu "%s"'
-    
-    elif which('su'):
-        su_sudo_str = 'su'
-
-    return su_sudo_str
-
 
 #
 # Removes HTML or XML character references and entities from a text string.
@@ -1624,26 +1950,729 @@ def unescape(text):
             # named entity
             try:
                 #text = unichr(htmlentitydefs.name2codepoint[text[1:-1]])
-                text = chr(htmlentitydefs.name2codepoint[text[1:-1]])
+                text = chr(html_entities.name2codepoint[text[1:-1]])
             except KeyError:
                 pass
         return text # leave as is
-    return re.sub("&#?\w+;", fixup, text)
+    return re.sub(r"&#?\w+;", fixup, text)
 
 
 # Adds HTML or XML character references and entities from a text string
 
 def escape(s):
-    if not isinstance(s, unicode):
-        s = unicode(s) # hmmm...
+    if not isinstance(s, str):
+        s = to_unicode(s) 
 
-    s = s.replace(u"&", u"&amp;")
+    s = s.replace("&", "&amp;")
 
-    for c in htmlentitydefs.codepoint2name:
+    for c in html_entities.codepoint2name:
         if c != 0x26: # exclude &
-            s = s.replace(unichr(c), u"&%s;" % htmlentitydefs.codepoint2name[c])
+            s = s.replace(chr(c), "&%s;" % html_entities.codepoint2name[c])
 
-    for c in range(0x20) + range(0x7f, 0xa0):
-        s = s.replace(unichr(c), u"&#%d;" % c)
+    for c in list(range(0x20)) + list(range(0x7f, 0xa0)):
+        s = s.replace(chr(c), "&#%d;" % c)
 
     return s
+
+
+#return tye: strings
+#Return values.
+#   None --> on error.
+#  "terminal name"-->success
+def get_terminal():
+    terminal_list=['gnome-terminal', 'konsole','x-terminal-emulator', 'xterm', 'gtkterm']
+    terminal_cmd = None
+    for cmd in terminal_list:
+        if which(cmd):
+            terminal_cmd = cmd +" -e "
+            log.debug("Available Terminal = %s " %terminal_cmd)
+            break
+
+    return terminal_cmd
+
+#Return Type: bool
+# Return values:
+#      True --> if it is older version
+#      False  --> if it is same or later version.
+
+def Is_HPLIP_older_version(installed_version, available_version):
+
+    if available_version == "" or available_version == None or installed_version == "" or installed_version == None:
+        log.debug("available_version is ''")
+        return False
+
+    installed_array=installed_version.split('.')
+    available_array=available_version.split('.')
+
+    log.debug("HPLIP Installed_version=%s  Available_version=%s"%(installed_version,available_version))
+    cnt = 0
+    Is_older = False
+    pat=re.compile(r'''(\d{1,})([a-z]{1,})''')
+    try:
+        while cnt <len(installed_array) and cnt <len(available_array):
+
+            installed_ver_dig=0
+            installed_ver_alph=' '
+            available_ver_dig=0
+            available_ver_alph=' '
+            if pat.search(installed_array[cnt]):
+                installed_ver_dig = int(pat.search(installed_array[cnt]).group(1))
+                installed_ver_alph = pat.search(installed_array[cnt]).group(2)
+            else:
+                installed_ver_dig = int(installed_array[cnt])
+
+            if pat.search(available_array[cnt]):
+                available_ver_dig = int(pat.search(available_array[cnt]).group(1))
+                available_ver_alph = pat.search(available_array[cnt]).group(2)
+            else:
+                available_ver_dig = int(available_array[cnt])
+
+            if (installed_ver_dig < available_ver_dig):
+                Is_older = True
+                break
+            elif (installed_ver_dig > available_ver_dig):
+                log.debug("Already new verison is installed")
+                return False
+            #checking sub minor versions .. e.g "3.12.10a" vs "3.12.10".... "3.12.10a" --> latest
+            else:
+                if (installed_ver_alph.lower() < available_ver_alph.lower()):
+                    Is_older = True
+                    break
+                elif (installed_ver_alph.lower() > available_ver_alph.lower()):
+                    log.debug("Already new verison is installed")
+                    return False
+
+            cnt += 1
+
+        # To check version is installed. e.g. "3.12.10" vs "3.12.10.1".... "3.12.10.1"-->latest
+        if Is_older is False and len(installed_array) < len(available_array):
+            Is_older = True
+
+    except:
+        log.error("Failed to get the latest version. Check out %s for manually installing latest version of HPLIP."%HPLIP_WEB_SITE)
+        return False
+
+    return Is_older
+
+
+def downLoad_status(count, blockSize, totalSize):
+    percent = int(count*blockSize*100/totalSize)
+    if count != 0:
+        sys.stdout.write("\b\b\b")
+    sys.stdout.write("%s" %(log.color("%2d%%"%percent, 'bold')))
+    sys.stdout.flush()
+
+def chunk_write(response, out_fd, chunk_size =8192, status_bar = downLoad_status):
+   if response.info() and response.info().get('Content-Length'):
+       total_size = int(response.info().get('Content-Length').strip())
+   else:
+       log.debug("Ignoring progres bar")
+       status_bar = None
+
+   bytes_so_far = 0
+   while 1:
+      chunk = response.read(chunk_size)
+      if not chunk:
+         break
+
+      out_fd.write(chunk)
+      bytes_so_far += len(chunk)
+
+      if status_bar:
+         status_bar(bytes_so_far, 1, total_size)
+      
+
+# Return Values. Sts, outFile
+# Sts =  0             --> Success
+#        other thatn 0  --> Fail
+# outFile = downloaded Filename.
+#            empty file on Failure case
+def download_from_network(weburl, outputFile = None, useURLLIB=False):
+    retValue = -1
+
+    if weburl == "" or weburl == None:
+        log.error("URL is empty")
+        return retValue, ""
+
+    if outputFile is None:
+        fp, outputFile = make_temp_file()
+
+    try:
+        if useURLLIB is False:
+            wget = which("wget")
+            if wget:
+                wget = os.path.join(wget, "wget")
+                status, output = run("%s --cache=off --tries=3 --timeout=60 --output-document=%s %s" %(wget, outputFile, weburl))
+                if status:
+                    log.error("Failed to connect to HPLIP site. Error code = %d" %status)
+                    return retValue, ""
+            else:
+                useURLLIB = True
+
+        if useURLLIB:
+		
+            #sys.stdout.write("Download in progress..........")
+            try:
+                response = urllib2_request.urlopen(weburl)    
+                file_fd = open(outputFile, 'wb')
+                chunk_write(response, file_fd)
+                file_fd.close()
+            except urllib2_error.URLError as e:
+                log.error("Failed to open URL: %s" % weburl)
+                return retValue, ""
+
+    except IOError as e:
+        log.error("I/O Error: %s" % e.strerror)
+        return retValue, ""
+
+    if not os.path.exists(outputFile):
+        log.error("Failed to get hplip version/ %s file not found."%hplip_version_file)
+        return retValue, ""
+
+    return 0, outputFile
+
+
+
+
+
+class Sync_Lock:
+    def __init__(self, filename):
+        self.Lock_filename = filename
+        self.handler = open(self.Lock_filename, 'w')
+
+# Wait for another process to release resource and acquires the resource.
+    def acquire(self):
+        fcntl.flock(self.handler, fcntl.LOCK_EX)
+
+    def release(self):
+        fcntl.flock(self.handler, fcntl.LOCK_UN)
+
+    def __del__(self):
+        self.handler.close()
+
+def sendEvent(event_code,device_uri, printer_name, username="", job_id=0, title="", pipe_name=''):
+
+    if not dbus_avail:
+        log.debug("Failed to import dbus, lowlevel")
+        return
+
+    log.debug("send_message() entered")
+    args = [device_uri, printer_name, event_code, username, job_id, title, pipe_name]
+    msg = lowlevel.SignalMessage(path='/', interface=DBUS_SERVICE, name='Event')
+    msg.append(signature='ssisiss', *args)
+    SystemBus().send_message(msg)
+    log.debug("send_message() returning")
+
+def expand_list(File_exp):
+   File_list = glob.glob(File_exp)
+   if File_list:
+      File_list_str = ' '.join(File_list)
+      return File_list, File_list_str
+   else:
+      return [],""
+
+
+
+def unchunck_xml_data(src_data):
+    index = 0
+    dst_data=""
+    # src_data contains HTTP data + xmlpayload. delimter is '\r\n\r\n'.
+    while 1:
+        if src_data.find('\r\n\r\n') != -1:
+            src_data = src_data.split('\r\n\r\n', 1)[1]
+            if not src_data.startswith("HTTP"):
+                break
+        else:
+            return dst_data
+
+    if len(src_data) <= 0:
+        return dst_data
+
+    #If xmlpayload doesn't have chuncksize embedded, returning same xml.
+    if src_data[index] == '<':
+        dst_data = src_data
+    else:  # Removing chunck size from xmlpayload
+        try:
+           while index < len(src_data):
+             buf_len = 0
+             while src_data[index] == ' ' or src_data[index] == '\r' or src_data[index] == '\n':
+               index = index +1
+             while src_data[index] != '\n' and src_data[index] != '\r':
+               buf_len = buf_len *16 + int(src_data[index], 16)
+               index = index +1
+
+             if buf_len == 0:
+                 break;
+
+             dst_data = dst_data+ src_data[index:buf_len+index+2]
+
+             index = buf_len + index + 2  # 2 for after size '\r\n' chars.
+        except IndexError:
+            pass
+    return dst_data
+
+
+#check_user_groups function checks required groups and returns missing list.
+#Input:
+#       required_grps_str --> required groups from distro.dat
+#       avl_grps    --> Current groups list (as a string) for this user.
+# Output:
+#       result  --> Returns True, if required groups are present
+#               --> Returns False, if required groups are not present
+#       missing_groups_str --> Returns the missing groups list (as a string)
+#
+def check_user_groups(required_grps_str, avl_grps):
+    result = False
+    exp_grp_list=[]
+    exp_pat =re.compile('''.*-G(.*)''')
+    if required_grps_str and exp_pat.search(required_grps_str):
+        grps = exp_pat.search(required_grps_str).group(1)
+        grps =re.sub(r'\s', '', str(grps))
+        exp_grp_list = grps.split(',')
+    else:
+        exp_grp_list.append('lp')
+
+    log.debug("Requied groups list =[%s]"%exp_grp_list)
+
+    avl_grps = avl_grps.rstrip('\r\n')
+    grp_list= avl_grps.split(' ')
+    for  g in grp_list:
+        grp_index = 0
+        for p in exp_grp_list:
+            if g == p:
+                del exp_grp_list[grp_index]
+                break
+            grp_index +=1
+
+    if len(exp_grp_list) == 0:
+        result = True
+    missing_groups_str=''
+    for a in exp_grp_list:
+        if missing_groups_str:
+            missing_groups_str += ','
+        missing_groups_str += a
+    return result ,missing_groups_str
+
+
+def check_library( so_file_path):
+    ret_val = False
+    if not os.path.exists(so_file_path):
+        log.debug("Either %s file is not present or symbolic link is missing" %(so_file_path))
+    else:
+        # capturing real file path
+        if os.path.islink(so_file_path):
+            real_file = os.path.realpath(so_file_path)
+        else:
+            real_file = so_file_path
+
+        if not os.path.exists(real_file):
+            log.debug("%s library file is missing." % (real_file))
+        elif (os.stat(so_file_path).st_mode & 72) != 72:
+            log.debug("%s library file doesn't have user/group execute permission." % (so_file_path))
+        else:
+            log.debug("%s library file present." % (so_file_path))
+            ret_val = True
+
+    log.debug("%s library status: %d" % (so_file_path, ret_val))
+    return ret_val
+
+
+def download_via_wget(target):
+    status = -1
+    wget = which("wget")
+    if target and wget:
+        wget = os.path.join(wget, "wget")
+        cmd = "%s --cache=off --tries=3 --timeout=60 --output-document=- %s" % (wget, target)
+        log.debug(cmd)
+        status, output = run(cmd)
+        log.debug("wget returned: %d" % status)
+    else:
+        log.debug("wget not found")
+    return status
+
+def download_via_curl(target):
+    status = -1
+    curl = which("curl")
+    if target and curl:
+        curl = os.path.join(curl, "curl")
+        cmd = "%s --output - --connect-timeout 5 --max-time 10 %s" % (curl, target)
+        log.debug(cmd)
+        status, output = run(cmd)
+        log.debug("curl returned: %d" % status)
+    else:
+        log.debug("curl not found")
+    return status
+
+def check_network_via_ping(target):
+    status = -1
+    ping = which("ping")
+    if target and ping:
+        ping = os.path.join(ping, "ping")
+        cmd = "%s -c1 -W1 -w10 %s" % (ping, target)
+        log.debug(cmd)
+        status, output = run(cmd)
+        log.debug("ping returned: %d" % status)
+    else:
+        log.debug("ping not found")
+    return status
+
+def check_network_connection(host = "www.hp.com", port=80):
+    import socket
+    try:
+        socket.setdefaulttimeout(10)
+        socket.create_connection((host, port))
+        return True
+    except OSError:
+        return False
+
+#Expands '*' in File/Dir names.
+def expandList(Files_List, prefix_dir=None):
+    Expanded_Files_list=[]
+    for f in Files_List:
+        if prefix_dir:
+            f= prefix_dir + '/' + f
+        if '*' in f:
+            f_full = glob.glob(f)
+            for file in f_full:
+              Expanded_Files_list.append(file)
+        else:
+            Expanded_Files_list.append(f)
+    return Expanded_Files_list
+
+def compare(x, y):
+    try:
+        return cmp(float(x), float(y))
+    except ValueError:
+        return cmp(x, y)
+
+
+def check_pkg_mgr( package_mgrs = None):
+    if package_mgrs is not None:
+        log.debug("Searching for '%s' in running processes..." % package_mgrs)
+        for p in package_mgrs:
+                status,process = Is_Process_Running(p)
+                if status is True:
+                    for pid in process:
+                        log.debug("Found: %s (%s)" % (process[pid], pid))
+                        return (pid, process[pid])
+
+    log.debug("Not found")
+    return (0, '')
+
+# checks if given process is running.
+#return value:
+#    True or False
+#    None - if process is not running
+#    grep output - if process is running
+
+def Is_Process_Running(process_name):
+    if not process_name:
+        return False, {}
+
+    try:
+        process = {}
+        p1 = Popen(["ps", "-w", "-w", "aux"], stdout=PIPE)
+        p2 = Popen(["grep", process_name], stdin=p1.stdout, stdout=PIPE)
+        p3 = Popen(["grep", "-v", "grep"], stdin=p2.stdout, stdout=PIPE)
+        output = p3.communicate()[0]
+        log.debug("Is_Process_Running output = %s " %output)
+
+        if output:
+            for p in output.splitlines():
+                cmd = "echo '%s' | awk {'print $2'}" %p
+                status,pid = subprocess.getstatusoutput(cmd)
+                cmd = "echo '%s' | awk {'print $11,$12'}" %p
+                status,cmdline = subprocess.getstatusoutput(cmd)
+                if pid :
+                    process[pid] = cmdline
+
+            return True, process
+        else:
+            return False, {}
+
+    except Exception as e:
+        log.error("Execution failed: process Name[%s]" %process_name)
+        print >>sys.stderr, "Execution failed:", e
+        return False, {}
+
+
+def remove(path, passwordObj = None, cksudo = False):
+    cmd= RMDIR + " " + path
+    if cksudo and passwordObj:
+        cmd= passwordObj.getAuthCmd() %cmd
+
+    log.debug("Removing %s cmd = %s " %(path, cmd))
+    status, output = run(cmd, passwordObj)
+    if 0 != status:
+        log.debug("Failed to remove=%s "%path)
+
+# This is operator overloading function for compare.. 
+def cmp_to_key(mycmp):
+    'Convert a cmp= function into a key= function'
+    class K(object):
+        def __init__(self, obj, *args):
+            self.obj = obj
+        def __lt__(self, other):
+            return mycmp(self.obj, other.obj) < 0
+        def __gt__(self, other):
+            return mycmp(self.obj, other.obj) > 0
+        def __eq__(self, other):
+            return mycmp(self.obj, other.obj) == 0
+        def __le__(self, other):
+            return mycmp(self.obj, other.obj) <= 0  
+        def __ge__(self, other):
+            return mycmp(self.obj, other.obj) >= 0
+        def __ne__(self, other):
+            return mycmp(self.obj, other.obj) != 0
+    return K
+
+# This is operator overloading function for compare.. for level functionality.
+def levelsCmp(x, y):
+    return (x[1] > y[1]) - (x[1] < y[1]) or (x[3] > y[3]) - (x[3] < y[3])
+
+    
+def find_pip():
+    '''Determine the pip command syntax available for a particular distro.
+    since it varies across distros'''
+    
+    if which('pip-%s'%(str(MAJ_VER)+'.'+str(MIN_VER))):
+        return 'pip-%s'%(str(MAJ_VER)+'.'+str(MIN_VER))
+    elif which('pip-%s'%str(MAJ_VER)):
+        return 'pip-%s'%str(MAJ_VER)
+    elif which('pip%s'%str(MAJ_VER)):
+        return 'pip%s'%str(MAJ_VER) 
+    elif which('pip%s'%(str(MAJ_VER)+'.'+str(MIN_VER))):
+        return 'pip%s'%(str(MAJ_VER)+'.'+str(MIN_VER))
+    elif which('pip-python%s'%str(MAJ_VER)):
+        return 'pip-python%s'%str(MAJ_VER)
+    elif which('pip-python'):
+        return 'pip-python'
+    else:
+        log.error("python pip command not found. Please install '%s' package(s) manually"%depends_to_install_using_pip)
+
+
+def check_lan():
+    try:
+        x = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        x.connect(('1.2.3.4', 56))
+        x.close()
+        return True
+    except socket.error:
+        return False
+ 
+def extract_xml_chunk(data):
+    if data.find('\r\n\r\n'):
+        index = data.find('\r\n\r\n')
+        data = data[index+4:]
+    if data[0:1] != '<':            # Check for source encoding chunked or content length in http respose header.
+        size = -1
+        temp = ""
+        while size:
+            index = data.find('\r\n')
+            size = int(data[0:index+1], 16)
+            temp = temp + data[index+2:index+2+size]
+            data = data[index+2+size+2:len(data)]
+        data = temp
+    return data
+
+
+def checkPyQtImport45():
+    try:
+        import PyQt5
+        return "PyQt5"
+    except ImportError as e:
+        log.debug(e)
+
+    try:
+        import PyQt4
+        return "PyQt4"
+    except ImportError as e:
+        log.debug(e)
+
+    raise ImportError("GUI Modules PyQt4 and PyQt5 are not installed")
+
+
+def ui_status():
+    _ui_status = ""
+    try:
+        _ui_status = checkPyQtImport45()
+        log.note("Using GUI Module %s" % _ui_status)
+        return _ui_status
+    except ImportError as e:
+        log.error(e)
+
+
+def import_dialog(ui_toolkit):
+    if ui_toolkit == "qt4":
+        try:
+            from PyQt4.QtGui import QApplication
+            log.debug("Using PyQt4")
+            return  (QApplication, "ui4")
+        except ImportError as e:
+            log.error(e)
+            sys.exit(1)
+    elif ui_toolkit == "qt5":
+        try:
+            from PyQt5.QtWidgets import QApplication
+            log.debug("Using PyQt5")
+            return (QApplication, "ui5")
+        except ImportError as e:
+            log.error(e)
+            sys.exit(1)
+        else:
+            log.error("Unable to load Qt support. Is it installed?")
+            sys.exit(1)
+
+
+def dyn_import_mod(mod_name_as_str):
+    components = mod_name_as_str.split('.')
+    mod = __import__(mod_name_as_str)
+    for comp in components[1:]:
+        mod = getattr(mod, comp)
+    return mod
+
+def import_ext(ext_name):
+    try:
+        return importlib.import_module(ext_name)
+    except ImportError:
+        import sysconfig
+        sys.path.append(sysconfig.get_path('platlib'))
+        return importlib.import_module(ext_name)
+
+def get_distro_name(passwordObj = None):
+    log.debug("Determining distro...")
+    name, ver = '', '0.0'
+    found = False
+    distro_release_name = str()
+    # Getting distro information using platform module
+    try:
+        import platform
+        try:
+            name = platform.dist()[0].lower()
+            ver = platform.dist()[1]
+        except AttributeError:
+            import distro
+            name = distro.linux_distribution()[0].lower()
+            ver = distro.linux_distribution()[1]
+            distro_release_name = distro.distro_release_attr('name')
+        if not name:
+            found = False
+            log.debug("Not able to detect distro")
+        else:
+            found = True
+            log.debug("Able to detect distro")
+    except ImportError:
+        found = False
+        log.debug("Not able to detect distro using python")
+
+    # Getting distro information using lsb_release command
+    # platform return 'redhat' even for 'RHEL' or 'arch' for ManjaroLinux so re-reading using
+    # lsb_release.
+    if not found or name == 'redhat' or name == 'arch':
+        lsb_rel = which("lsb_release", True)
+        if lsb_rel:
+            log.debug("Using 'lsb_release -is/-rs' to determine distro")
+            status, name = run(lsb_rel + ' -is', passwordObj)
+            if not status and name:
+                status, ver = run(lsb_rel + ' -rs', passwordObj)
+                if not status and ver:
+                    ver = ver.lower().strip()
+                    found = True
+
+    # Getting distro information using /etc/issue file
+    if not found:
+        try:
+            name = open('/etc/issue', 'r').read().lower().strip()
+                
+        except IOError:
+            found = False
+        else:
+            found = True
+            for n in name.split():
+                m = n
+                if '.' in n:
+                    m = '.'.join(n.split('.')[:2])
+
+                try:
+                    ver = float(m)
+                except ValueError:
+                    try:
+                        ver = int(m)
+                    except ValueError:
+                        ver = '0.0'
+    if "welcome" in name:
+        found = False
+    #search in etc/os-release
+    if not found:
+        try:
+            os_release = open('/etc/os-release', 'r')
+            for line in os_release:
+                if line.lower().startswith('name='):
+                    name = line.split('"')[1]
+                if line.lower().startswith('version='):
+                    ver = line.split('"')[1]
+                found = True
+        except:
+            found = False          
+    # Updating the distro name and version.
+    if found:
+        name = name.lower().strip()
+        #convert the name to a standard name based on distro name dictionary
+        #for example "welcome to MX Linux" gets converted to "mxlinux"
+        # Check if any value from the distro_name_dict is a substring of name
+        for key, standard_name in distro_name_dict.items():
+            if key in name:
+                name = standard_name
+                break
+
+        log.debug("Distro name=%s" % name)
+
+
+        log.debug("Distro version=%s" % ver)
+        if name == "rhel" and ver[0] == "5" and ver[1] == ".":
+            ver = "5.0"
+        elif name == "rhel" and ver[0] == "6" and ver[1] == ".":
+            ver = "6.0"
+        if 'MX' in distro_release_name:
+            name = "mxlinux"
+            ver = distro_release_name[3:5]
+        if 'manjaro' in name.lower():
+            version = ver.split('.')
+            ver = version[0] +'.'+version[1]
+        
+    else:
+        log.warn("Failed to get the distro information.")
+        name, ver = 0, '0.0'
+
+    log.debug("distro=%s, distro_version=%s" %(str(name),str(ver)))
+    return (name,ver)
+                
+def readAuthType():
+    try:
+        import os
+        from grp import getgrnam
+        authType = 'su'
+        user = os.getenv('USER')
+        try:
+            members = getgrnam('wheel').gr_mem
+        except KeyError:
+            try:
+                members = getgrnam('sudo').gr_mem
+            except:
+                log.warn(" can not get user group " )
+                return authType     
+        if user in members:
+            authType = 'sudo'
+        else:
+            authType = 'su'
+    except :
+        log.warn("unable to determine auth_type ")
+    return authType
+
+def sanitize_filename(filename):
+    # Remove any path traversal sequences
+    filename = os.path.basename(filename)
+    # Ensure the filename only contains safe characters
+    if not re.match(r'^[\w\-. ]+$', filename):
+        raise ValueError("Invalid filename")
+    return filename

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2001-2008 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2001-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -26,7 +26,7 @@ from base.g import *
 
 # Qt
 from qt import *
-from align13form_base import Align13Form_Base
+from .align13form_base import Align13Form_Base
 
 
 class Align13Form(Align13Form_Base):

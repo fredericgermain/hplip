@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# (c) Copyright 2003-2007 Hewlett-Packard Development Company, L.P.
+# (c) Copyright 2003-2015 HP Development Company, L.P.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 __version__ = '2.0'
 __mod__ = 'hp-systray'
 __title__ = 'System Tray Status Service'
-__doc__ = ""
+__doc__ = "System Tray monitors the HP device status and Displays"
 
 # StdLib
 import sys
@@ -49,13 +49,14 @@ if __name__ == '__main__':
         os.setsid()
 
     mod = module.Module(__mod__, __title__, __version__, __doc__, None,
-                       (GUI_MODE,), (UI_TOOLKIT_QT4, UI_TOOLKIT_QT3))
+                       (GUI_MODE,), (UI_TOOLKIT_QT5, UI_TOOLKIT_QT4, UI_TOOLKIT_QT3))
 
     mod.setUsage(module.USAGE_FLAG_NONE,
         extra_options=[("Startup even if no hplip CUPS queues are present:", "-x or --force-startup", "option", False)])
 
     opts, device_uri, printer_name, mode, ui_toolkit, lang = \
-        mod.parseStdOpts('x', ['force-startup'], False)
+        mod.parseStdOpts('x', ['force-startup','ignore-update-firsttime'], False)
+        # ignore-update-firsttime is required. ui/systemtray and ui4/systemtray will read this value using sys.args.
 
     force_startup = False
     for o, a in opts:
@@ -103,9 +104,13 @@ if __name__ == '__main__':
         
         else: # qt4
             try:
-                import ui4.systemtray as systray
-            except ImportError:
-                log.error("Unable to load Qt4 support. Is it installed?")
+                if ui_toolkit == "qt4":
+                    import ui4.systemtray as systray
+                elif ui_toolkit == "qt5":
+                    import ui5.systemtray as systray
+            except ImportError as e:
+                log.error(e)
+                log.error("Unable to load Qt4/Qt5 support. Is it installed?")
                 mod.unlockInstance()
                 sys.exit(1)        
 
@@ -117,8 +122,8 @@ if __name__ == '__main__':
     else:
         # child (dbus & device i/o [qt4] or dbus [qt3])
         os.close(r1)
-        
-        if ui_toolkit == 'qt4':
+
+        if ui_toolkit in  ('qt4', 'qt5'):
             r2, w2 = os.pipe()
             r3, w3 = os.pipe()
             
