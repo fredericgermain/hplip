@@ -25,9 +25,9 @@
 #   103 = no jpeg-devel
 #   104 = no libdl
 
-#AC_PREREQ(2.59)
+#AC_PREREQ([2.72])
 
-AC_INIT([HP Linux Imaging and Printing], [3.25.8], [3.25.8], [hplip])
+AC_INIT([HP Linux Imaging and Printing],[3.25.8],[3.25.8],[hplip])
 
 #AM_INIT_AUTOMAKE([1.9 foreign])
 AM_INIT_AUTOMAKE
@@ -37,7 +37,7 @@ AC_DISABLE_STATIC
 AC_PROG_CXX
 AC_PROG_CC
 AC_PROG_INSTALL
-AC_PROG_LIBTOOL
+LT_INIT
 
 # Checks for required libraries, don't set global -lpthread, -lm, -ljpeg, ... here, set in Makefile.
 AC_CHECK_LIB([pthread], [pthread_create], [LIBS="$LIBS"], [AC_MSG_ERROR([cannot find libpthread support], 7)])
@@ -383,26 +383,26 @@ else
 fi
 AM_CONDITIONAL(LIBUSB01_BUILD, test x$libusb01_build = xyes)
 
-AC_ARG_WITH(cupsbackenddir, AC_HELP_STRING([--with-cupsbackenddir=DIR], [set cups backend install directory [default=/usr/lib/cups/backend]]),
+AC_ARG_WITH(cupsbackenddir, AS_HELP_STRING([--with-cupsbackenddir=DIR],[set cups backend install directory [default=/usr/lib/cups/backend]]),
    cupsbackenddir=$withval, cupsbackenddir="/usr/lib/cups/backend")
 
-AC_ARG_WITH(cupsfilterdir, AC_HELP_STRING([--with-cupsfilterdir=DIR], [set cups filter install directory [default=/usr/lib/cups/filter]]),
+AC_ARG_WITH(cupsfilterdir, AS_HELP_STRING([--with-cupsfilterdir=DIR],[set cups filter install directory [default=/usr/lib/cups/filter]]),
    cupsfilterdir=$withval, cupsfilterdir="/usr/lib/cups/filter")
 
-AC_ARG_WITH(icondir, AC_HELP_STRING([--with-icondir=DIR], [set hplip.desktop install directory [default=/usr/share/applications]]),
+AC_ARG_WITH(icondir, AS_HELP_STRING([--with-icondir=DIR],[set hplip.desktop install directory [default=/usr/share/applications]]),
    icondir=$withval, icondir="/usr/share/applications")
 
-AC_ARG_WITH(icondir, AC_HELP_STRING([--with-icondir=DIR], [set hp-uiscan.desktop install directory [default=/usr/share/applications]]),
+AC_ARG_WITH(icondir, AS_HELP_STRING([--with-icondir=DIR],[set hp-uiscan.desktop install directory [default=/usr/share/applications]]),
    icondir=$withval, icondir="/usr/share/applications")
 
-AC_ARG_WITH(systraydir, AC_HELP_STRING([--with-systraydir=DIR], [set hplip-systray.desktop install directory [default=/etc/xdg/autostart]]),
+AC_ARG_WITH(systraydir, AS_HELP_STRING([--with-systraydir=DIR],[set hplip-systray.desktop install directory [default=/etc/xdg/autostart]]),
    systraydir=$withval, systraydir="/etc/xdg/autostart")
 
-AC_ARG_WITH(hpppddir, AC_HELP_STRING([--with-hpppddir=DIR], [set hp ppd install directory [default=datadir/ppd/HP]]),
+AC_ARG_WITH(hpppddir, AS_HELP_STRING([--with-hpppddir=DIR],[set hp ppd install directory [default=datadir/ppd/HP]]),
    hpppddir=$withval, hpppddir="$datadir/ppd/HP")
    
 # AppArmor Changes
-AC_ARG_WITH(apparmordir, AC_HELP_STRING([--with-apparmordir=DIR], [set apparmor profile install directory [default=/etc/apparmor.d]]),
+AC_ARG_WITH(apparmordir, AS_HELP_STRING([--with-apparmordir=DIR],[set apparmor profile install directory [default=/etc/apparmor.d]]),
    apparmordir=$withval, apparmordir="/etc/apparmor.d")
 
 if test -f "/usr/share/cups/mime/mime.types"; then
@@ -410,13 +410,13 @@ if test -f "/usr/share/cups/mime/mime.types"; then
 else
    abs_mimedir="/etc/cups/"
 fi
-AC_ARG_WITH(mimedir, AC_HELP_STRING([--with-mimedir=DIR], [set cups mime.types location [default=abs_mimedir]]),
+AC_ARG_WITH(mimedir, AS_HELP_STRING([--with-mimedir=DIR],[set cups mime.types location [default=abs_mimedir]]),
    mimedir=$withval, mimedir="$abs_mimedir")
 
-AC_ARG_WITH(docdir, AC_HELP_STRING([--with-docdir=DIR], [set hplip documentation directory [default=datadir/doc]]),
+AC_ARG_WITH(docdir, AS_HELP_STRING([--with-docdir=DIR],[set hplip documentation directory [default=datadir/doc]]),
    hpdocdir=$withval, hpdocdir="$datadir/doc/hplip-$VERSION")
 
-AC_ARG_WITH(htmldir, AC_HELP_STRING([--with-htmldir=DIR], [set hplip html documentation directory [default=datadir/doc]]),
+AC_ARG_WITH(htmldir, AS_HELP_STRING([--with-htmldir=DIR],[set hplip html documentation directory [default=datadir/doc]]),
    hphtmldir=$withval, hphtmldir="$datadir/doc/hplip-$VERSION")
 
 AC_MSG_CHECKING([for foomatic ppd install])
@@ -432,7 +432,7 @@ else
 fi
 AM_CONDITIONAL(FOOMATIC_PPD_INSTALL, test x$foomatic_ppd_install = xyes)
 
-AC_ARG_WITH(drvdir, AC_HELP_STRING([--with-drvdir=DIR], [set cups drv install directory [default=datadir/cups/drv/hp]]),
+AC_ARG_WITH(drvdir, AS_HELP_STRING([--with-drvdir=DIR],[set cups drv install directory [default=datadir/cups/drv/hp]]),
    drvdir=$withval, drvdir="$datadir/cups/drv/hp")
 
 AC_MSG_CHECKING([for foomatic drv install])
