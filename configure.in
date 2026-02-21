@@ -31,7 +31,7 @@ AC_INIT([HP Linux Imaging and Printing],[3.25.8],[3.25.8],[hplip])
 
 AC_CONFIG_MACRO_DIRS([m4])
 
-AM_INIT_AUTOMAKE([foreign])
+AM_INIT_AUTOMAKE([foreign subdir-objects])
 AC_DISABLE_STATIC
 
 # Checks for programs.
