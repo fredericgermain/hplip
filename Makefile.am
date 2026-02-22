@@ -5,8 +5,11 @@
 #  Author: David Suffield, Naga Samrat Chowdary Narla, Sarbeswar Meher
 ACLOCAL_AMFLAGS = -Im4
 INCLUDES = -Iip -Iio/hpmud -Iscan/sane -Iprnt/hpijs -Icommon/
-CFLAGS+= -DCONFDIR=\"$(hplip_confdir)\"
+CFLAGS+= -DCONFDIR=\"$(hplip_confdir)\" -Wno-implicit-int -Wno-return-mismatch -Wno-implicit-function-declaration
 CXXFLAGS+= -DCONFDIR=\"$(hplip_confdir)\"
+
+#CFLAGS+= -O0 -g3
+#CXXFLAGS+= -O0 -g3
 
 hplipdir = $(datadir)/hplip
 apparmordir = /etc/apparmor.d
@@ -43,6 +46,7 @@ dist_www4_DATA = $(wwwsrc)/images/*
 endif 
  
 if HPLIP_BUILD
+if FULL_BUILD
 if !HPLIP_CLASS_DRIVER
 # hp backend.
 hpdir = $(cupsbackenddir)
@@ -55,6 +59,7 @@ endif #NETWORK_BUILD
 hp_LDFLAGS = $(libhpmud_la_LDFLAGS)
 hp_CFLAGS = $(DBUS_CFLAGS)
 endif #HPLIP_CLASS_DRIVER 
+endif #FULL_BUILD
 # hpaio sane backend
 if !HPLIP_CLASS_DRIVER
 if SCAN_BUILD
@@ -75,7 +80,7 @@ else
 libsane_hpaio_la_LDFLAGS = -version-info 1:0:0
 endif
 # The following is a interlibrary dependency that must be compiled first.
-libsane_hpaio_la_LIBADD = libhpip.la libhpmud.la libhpipp.la $(DBUS_LIBS) -lcups -ldl
+libsane_hpaio_la_LIBADD = libhpip.la libhpmud.la $(DBUS_LIBS) -ldl
 #libsane_hpaio_la_CFLAGS = -DWITH_NONAMESPACES -DSOAP_DEBUG
 libsane_hpaio_la_CFLAGS = $(DBUS_CFLAGS) -Iprotocol
 
@@ -126,6 +131,10 @@ libhpmud_la_LIBADD  =  libhpdiscovery.la
 endif
 endif #HPLIP_CLASS_DRIVER
 
+# models database, used by libhpmud and other components
+modelsdir = $(hplipdir)/data/models
+dist_models_DATA = data/models/models.dat
+
 # ip library
 lib_LTLIBRARIES += libhpip.la
 libhpip_la_LDFLAGS = -version-info 0:1:0
@@ -136,31 +145,35 @@ libhpip_la_SOURCES = ip/xconvolve.c ip/xfax.c ip/xgrayout.c ip/xjpg_dct.c ip/xjp
 	ip/hpip.h ip/ipdefs.h ip/xform.h ip/xjpg_dct.h ip/xjpg_huf.h ip/xjpg_mrk.h
 
 #hpmud rules data dir
+if FULL_BUILD
 rulessystemdir=/usr/lib/systemd/system
 dist_rulessystem_DATA =data/rules/hplip-printer@.service
+endif #FULL_BUILD
 
 # hpmud.rules
 if !HPLIP_CLASS_DRIVER
-rulesdir = /etc/udev/rules.d
 if UDEV_SYSFS_RULES
+rulesdir = /etc/udev/rules.d
 dist_rules_DATA = data/rules/56-hpmud_sysfs.rules
-else
-dist_rules_DATA = data/rules/56-hpmud.rules
 endif
 endif #HPLIP_CLASS_DRIVER
 
+if FULL_BUILD
 halpredir = /usr/share/hal/fdi/preprobe/10osvendor
 dist_halpre_DATA = data/rules/20-hplip-devices.fdi
+endif #FULL_BUILD
 
-# hplip.conf
-hplip_confdir = /etc/hp
+# hplip.conf /etc
+hplip_confdir = $(sysconfdir)/hp
 hplip_conf_DATA = hplip.conf
 
+if FULL_BUILD
 if !HPLIP_CLASS_DRIVER
 #pstotiff filter
 pstotiffdir = $(cupsfilterdir)
 pstotiff_SCRIPTS = fax/filters/pstotiff
 endif #HPLIP_CLASS_DRIVER
+endif #FULL_BUILD
 
 # hplip.state
 hplip_statedir = /var/lib/hp
@@ -244,7 +257,7 @@ apparmor_profiledir = /etc/apparmor.d
 apparmor_profile_DATA = apparmor/usr.share.hplip
 dist_apparmor_profile_DATA = apparmor/usr.share.hplip
 
-apparmor_abstractiondir = /etc/apparmor.d/abstractions
+apparmor_abstractiondir = $(sysconfdir)/apparmor.d/abstractions
 apparmor_abstraction_DATA = apparmor/abstractions/hplip
 dist_apparmor_abstraction_DATA = apparmor/abstractions/hplip
 
@@ -264,7 +277,6 @@ endif #NETWORK_BUILD
 endif #!HPLIP_CLASS_DRIVER
 
 # data
-modelsdir = $(hplipdir)/data/models
 if !HPLIP_CLASS_DRIVER
 images_16x16dir = $(hplipdir)/data/images/16x16
 images_24x24dir = $(hplipdir)/data/images/24x24
@@ -280,7 +292,6 @@ postscriptdir = $(hplipdir)/data/ps
 localzdir = $(hplipdir)/data/localization
 dist_postscript_DATA = data/ps/testpage.ps.gz data/ps/clean_page.pdf.gz
 endif #HPLIP_CLASS_DRIVER
-dist_models_DATA = data/models/models.dat
 
 if GUI_BUILD
 if !HPLIP_CLASS_DRIVER
@@ -468,13 +479,14 @@ dist_policykit_policy_DATA = data/policykit/com.hp.hplip.policy
 endif
 
 
+if HPPGSZ_BUILD
 # hppgsz
 noinst_PROGRAMS += hppgsz
 hppgsz_SOURCES = prnt/hpijs/PrinterProperties.cpp prnt/hpijs/PrinterProperties.h prnt/hpijs/bug.h
 hppgsz_CXXFLAGS = $(libapdk_la_CXXFLAGS)
 hppgsz_CFLAGS = $(libapdk_la_CFLAGS)
 hppgsz_LDADD = libapdk.la -ljpeg -ldl
-
+endif
 
 if GUI_BUILD
 # hplip.desktop
@@ -506,7 +518,13 @@ dist_rip_SCRIPTS = prnt/hpijs/foomatic-rip-hplip
 endif
 
 # apdk
+if HPPGSZ_BUILD
 noinst_LTLIBRARIES = libapdk.la
+endif # HPPGSZ_BUILD
+if HPIJS_INSTALL
+noinst_LTLIBRARIES = libapdk.la
+endif # HPIJS_INSTALL
+
 libapdk_la_SOURCES = prnt/hpijs/models.cpp prnt/hpijs/breaks_open.cpp \
 	prnt/hpijs/dj9xxvip.cpp prnt/hpijs/dj9xx.cpp prnt/hpijs/capture.cpp prnt/hpijs/colormatch.cpp prnt/hpijs/colormatcher_open.cpp \
 	prnt/hpijs/compression.cpp prnt/hpijs/context2.cpp prnt/hpijs/create_so.cpp prnt/hpijs/creator.cpp \
@@ -639,12 +657,14 @@ endif # FAX_BUILD
 endif # HPCUPS ONLY
 endif # HPCUPS_INSTALL
 
+if FULL_BUILD
 dat2drvdir = $(hplipdir)
 dat2drv_PROGRAMS = dat2drv
 dat2drv_SOURCES = Common.h  Dat2drv.cpp  Dat2drv.h Normalize.cpp  Normalize.h
 if GCC_GE_47
 dat2drv_CXXFLAGS = -std=c++11
 endif
+endif #FULL_BUILD
 
 if HPPS_INSTALL
 hppsdir = $(cupsfilterdir)
@@ -655,17 +675,20 @@ hpps_LDADD = -lcups  $(DBUS_LIBS)
 endif #HPPS_INSTALL
 
 
+if FULL_BUILD
 #locate driver
 locatedriverdir = $(hplipdir)
 locatedriver_PROGRAMS = locatedriver
-locatedriver_SOURCES = FindPPD.cpp FindPPD.h
+locatedriver_SOURCES = FindPPD.cpp FindPPD.h common/utils.c common/utils.h
 if GCC_GE_47
 locatedriver_CXXFLAGS = -std=c++11
 endif
 if HPLIP_CLASS_DRIVER
 dist_locatedriver_DATA = locatedriver
 endif #HPLIP_CLASS_DRIVER
+endif #FULL_BUILD
 
+if FULL_BUILD
 # PPDs
 ppddir = $(hpppddir)
 
@@ -673,6 +696,15 @@ ppddir = $(hpppddir)
 #dist_ppd_DATA += $(foomatic_ppd_printers)
 #endif
 if FOOMATIC_DRV_INSTALL
+
+$cups_ppd_printers):
+if !HPLIP_CLASS_DRIVER
+	./createPPD.sh -q
+endif
+if HPLIP_CLASS_DRIVER
+	./createPPD.sh -f
+endif
+
 cupsdrvdir = $(drvdir)
 cupsdrv_DATA = $(foomatic_drv)
 endif
@@ -686,11 +718,11 @@ endif
 if HPLIP_CLASS_DRIVER
 dist_ppd_DATA = $(class_cups_ppd_printers)
 endif
+endif #FULL_BUILD 
 
 if CUPS_DRV_INSTALL
 cupsdrv2dir = $(drvdir)
 cupsdrv2_DATA = $(cups_drv)
-endif
 
 if HPLIP_CLASS_DRIVER
 filterdir=$(cupsfilterdir)
@@ -700,6 +732,7 @@ printpluginsdir=$(cupsfilterdir)
 dist_filter_DATA = hpcups hpps dat2drv
 dist_printplugins_DATA = prnt/plugins/hbpl1-arm32.so prnt/plugins/hbpl1-arm64.so prnt/plugins/hbpl1-x86_32.so prnt/plugins/hbpl1-x86_64.so prnt/plugins/lj-arm32.so prnt/plugins/lj-arm64.so prnt/plugins/lj-x86_32.so prnt/plugins/lj-x86_64.so
 endif #HPLIP_CLASS_DRIVER
+endif #CUPS_DRV_INSTALL
 
 install-data-hook:
 if HPLIP_BUILD
@@ -720,23 +753,22 @@ if HPLIP_BUILD
 if !HPLIP_CLASS_DRIVER
 #	   If scanner build, add hpaio entry to sane dll.conf.
 	if [ "$(scan_build)" = "yes" ]; then \
-	   $(mkinstalldirs) $(DESTDIR)/etc/sane.d; \
-	   if [ ! -f $(DESTDIR)/etc/sane.d/dll.conf ]; then \
-		  touch $(DESTDIR)/etc/sane.d/dll.conf; \
-	   fi; \
-	   if ! grep ^hpaio $(DESTDIR)/etc/sane.d/dll.conf >/dev/null 2>/dev/null ; then \
-		  echo "Adding hpaio entry to /etc/sane.d/dll.conf." ; \
-		  echo hpaio >>$(DESTDIR)/etc/sane.d/dll.conf ; \
-	   fi; \
+	   $(mkinstalldirs) $(DESTDIR)$(sysconfdir)/sane.d/dll.d; \
+ 	   if true ; then \
+ 		  echo "Adding hpaio entry to $(sysconfdir)/sane.d/dll.d/hpaio.conf." ; \
+ 		  echo hpaio >>$(DESTDIR)$(sysconfdir)/sane.d/dll.d/hpaio.conf ; \
+ 	   fi; \
  	   if [ \( "$(UNAME)" = "x86_64" -a  -d "$(libdir)/x86_64-linux-gnu/sane" \) ]; then \
 	  	ln -sf $(libdir)/sane/libsane-hpaio.so $(libdir)/x86_64-linux-gnu/sane/ ; \
 	  	ln -sf $(libdir)/sane/libsane-hpaio.so.1 $(libdir)/x86_64-linux-gnu/sane/ ; \
-	   fi; \
-	   if [ \( \( "$(UNAME)" = "i686" -o "$(UNAME)" = "i386" \) -a -d "$(libdir)/i386-linux-gnu" \) ]; then \
+	   elif [ \( \( "$(UNAME)" = "i686" -o "$(UNAME)" = "i386" \) -a -d "$(libdir)/i386-linux-gnu" \) ]; then \
 	      ln -sf $(libdir)/libhpmud.so.0.0.6  $(libdir)/i386-linux-gnu/libhpmud.so ; \
 	      ln -sf $(libdir)/libhpmud.so.0.0.6  $(libdir)/i386-linux-gnu/libhpmud.so.0 ; \
 	      ln -sf $(libdir)/sane/libsane-hpaio.so.1.0.0 $(libdir)/i386-linux-gnu/sane/libsane-hpaio.so.1 ; \
 	      ln -sf $(libdir)/sane/libsane-hpaio.so.1.0.0 $(libdir)/i386-linux-gnu/sane/libsane-hpaio.so ; \
+           else \
+              [ -d $(libdir)/sane ] || mkdir $(libdir)/sane; \
+	      ln -sf $(libdir)/sane/libsane-hpaio.so.1 $(libdir)/sane/libsane-hpaio.so ; \
 	   fi \
 	fi
 endif #HPLIP_CLASS_DRIVER
