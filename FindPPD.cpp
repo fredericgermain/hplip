@@ -1,3 +1,4 @@
+#include "common/utils.h"
 #include"FindPPD.h"
 
 
@@ -7,15 +8,26 @@
  *  @return 1 and 0
  *
  */
+
+static char homedir[255] = "";
+
 unsigned char  CreateModelDict(MODEL_DICT_MAP &model_dict)
 {
     unsigned int count = 0; 
     string model_name  = "",
            line        = "";
 
+
     unsigned char family_ppd = 0;
     fstream file_pointer;
-    file_pointer.open("/usr/share/hplip/data/models/models.dat", fstream::in);
+
+    char sz[256];
+
+    get_key_value(CONFDIR "/hplip.conf", "[dirs]", "home", homedir, sizeof(homedir));
+    /* Search /data/models.dat file for specified model. */
+    snprintf(sz, sizeof(sz), "%s/data/models/models.dat", homedir);
+
+    file_pointer.open(sz, fstream::in);
 
     if(!file_pointer)
     {
