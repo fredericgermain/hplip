@@ -31,3 +31,11 @@ prnt/hpijs/platform.h
 .libs
 
 *.ppd.gz
+Makefile.in
+aclocal.m4
+configure
+configure~
+ltmain.sh
+compile
+m4/
+autom4te.cache/
