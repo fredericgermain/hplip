@@ -28,7 +28,7 @@ extern "C"
 
 #include <setjmp.h>
 
-#include <malloc.h>
+#include <stdlib.h>
 #include <memory.h>
 
 
