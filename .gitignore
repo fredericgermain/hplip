@@ -29,3 +29,5 @@ prnt/hpijs/platform.h
 .deps
 *.la
 .libs
+
+*.ppd.gz
