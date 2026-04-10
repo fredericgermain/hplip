@@ -39,6 +39,11 @@
 #include "hpmud.h"
 #include "hpmudi.h"
 
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#include <mach-o/dyld.h>
+#endif
+
 #define SECTION_SIZE 4096 /* Rough estimate of key/value section size in bytes. */
 
 typedef struct
@@ -509,8 +514,9 @@ static int parse_key_value_pair(char *buf, int len, struct hpmud_model_attribute
 /* Request device model attributes for URI. Return all attributes. */
 enum HPMUD_RESULT hpmud_get_model_attributes(char *uri, char *attr, int attrSize, int *bytes_read)
 {
-   char sz[256];
+   char sz[512];
    char model[256];
+   char testPath[512];
    int found;
    enum HPMUD_RESULT stat = HPMUD_R_DATFILE_ERROR;
 
@@ -518,35 +524,114 @@ enum HPMUD_RESULT hpmud_get_model_attributes(char *uri, char *attr, int attrSize
 
    INIT_LIST_HEAD(&head.list);
 
-   if (homedir[0] == 0)    
-      ReadConfig();
+   if (homedir[0] == 0)
+   {
+      /* Priority 1: HPLIP_MODELS_PATH environment variable points to directory containing models.dat */
+      const char *envPath = getenv("HPLIP_MODELS_PATH");
+      if (envPath != NULL && envPath[0] != 0)
+      {
+         snprintf(testPath, sizeof(testPath), "%s/models.dat", envPath);
+         if (access(testPath, R_OK) == 0)
+         {
+            strncpy(homedir, envPath, sizeof(homedir));
+            homedir[sizeof(homedir)-1] = 0;
+            DBG("Using HPLIP_MODELS_PATH: %s\n", homedir);
+         }
+      }
+
+#ifdef __APPLE__
+      /* Priority 2: macOS application bundle detection */
+      if (homedir[0] == 0)
+      {
+         CFBundleRef mainBundle = CFBundleGetMainBundle();
+         if (mainBundle != NULL)
+         {
+            CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL(mainBundle);
+            if (resourcesURL != NULL)
+            {
+               char bundlePath[512];
+               if (CFURLGetFileSystemRepresentation(resourcesURL, TRUE, (UInt8 *)bundlePath, sizeof(bundlePath)))
+               {
+                  DBG("Using macOS bundle path: %s\n", bundlePath);
+                  /* Try: Resources/{MACOS_APP_MODELSDIR}/models.dat */
+                  snprintf(testPath, sizeof(testPath), "%s/" MACOS_APP_MODELSDIR "/models.dat", bundlePath);
+                  if (access(testPath, R_OK) == 0)
+                  {
+                     snprintf(homedir, sizeof(homedir), "%s/" MACOS_APP_MODELSDIR, bundlePath);
+                     DBG("Using macOS bundle path: %s\n", homedir);
+                  } else {
+                     DBG("Failed macOS bundle path: %s\n", testPath);
+                  }
+               }
+               CFRelease(resourcesURL);
+            }
+         }
+      }
+
+      /* Priority 3: Homebrew and traditional macOS paths */
+      if (homedir[0] == 0)
+      {
+         const char *macPaths[] = {
+            "/opt/homebrew/share/hplip/data/models",      /* Apple Silicon Homebrew */
+            "/usr/local/share/hplip/data/models",         /* Intel Homebrew */
+            "/opt/local/share/hplip/data/models",         /* MacPorts */
+            NULL
+         };
+
+         for (int i = 0; macPaths[i] != NULL; i++)
+         {
+            snprintf(testPath, sizeof(testPath), "%s/models.dat", macPaths[i]);
+            if (access(testPath, R_OK) == 0)
+            {
+               strncpy(homedir, macPaths[i], sizeof(homedir));
+               homedir[sizeof(homedir)-1] = 0;
+               DBG("Using Homebrew path: %s\n", homedir);
+               break;
+            }
+         }
+      }
+#endif
+
+      /* Priority 4: Traditional config file (all platforms) */
+      if (homedir[0] == 0)
+      {
+         ReadConfig();
+         /* ReadConfig sets homedir to base path, we need to append data/models */
+         if (homedir[0] != 0)
+         {
+            char tempdir[255];
+            strncpy(tempdir, homedir, sizeof(tempdir));
+            snprintf(homedir, sizeof(homedir), "%s/data/models", tempdir);
+         }
+      }
+   }
 
    hpmud_get_uri_model(uri, model, sizeof(model));
 
-   /* Search /data/models.dat file for specified model. */
-   snprintf(sz, sizeof(sz), "%s/data/models/models.dat", homedir);
+   /* Search models.dat file for specified model. */
+   snprintf(sz, sizeof(sz), "%s/models.dat", homedir);
    found = ParseFile(sz, model, attr, attrSize, bytes_read);   /* save any labels in *.inc files */
 
    if (!found)
    {
-      BUG("no %s attributes found in %s\n", model, sz);  
+      BUG("no %s attributes found in %s\n", model, sz);
 
       DelList();   /* Unregister all labels. */
 
-      /* Search /data/models/unreleased/unreleased.dat file for specified model. */
-      snprintf(sz, sizeof(sz), "%s/data/models/unreleased/unreleased.dat", homedir);
+      /* Search unreleased/unreleased.dat file for specified model. */
+      snprintf(sz, sizeof(sz), "%s/unreleased/unreleased.dat", homedir);
       found = ParseFile(sz, model, attr, attrSize, bytes_read);   /* save any *.inc files */
    }
 
    if (!found)
-   {  
-      BUG("no %s attributes found in %s\n", model, sz);  
+   {
+      BUG("no %s attributes found in %s\n", model, sz);
       goto bugout;
-   }  
+   }
 
    stat = HPMUD_R_OK;
 
-bugout:   
+bugout:
    DelList();  /* Unregister all labels. */
    return stat;
 }
