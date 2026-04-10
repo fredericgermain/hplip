@@ -8,8 +8,8 @@ INCLUDES = -Iip -Iio/hpmud -Iscan/sane -Iprnt/hpijs -Icommon/
 CFLAGS+= -DCONFDIR=\"$(hplip_confdir)\" -Wno-implicit-int -Wno-return-mismatch -Wno-implicit-function-declaration
 CXXFLAGS+= -DCONFDIR=\"$(hplip_confdir)\"
 
-#CFLAGS+= -O0 -g3
-#CXXFLAGS+= -O0 -g3
+CFLAGS+= -O0 -g3
+CXXFLAGS+= -O0 -g3
 
 hplipdir = $(datadir)/hplip
 apparmordir = /etc/apparmor.d

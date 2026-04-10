@@ -61,7 +61,7 @@
 #endif
 
 // DO NOT commit with HPMUD_DEBUG enabled :(
-//#define HPMUD_DEBUG
+#define HPMUD_DEBUG
 
 #define _STRINGIZE(x) #x
 #define STRINGIZE(x) _STRINGIZE(x)
