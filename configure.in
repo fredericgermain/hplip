@@ -600,7 +600,7 @@ AC_MSG_RESULT($platform)
 
 # Check conditional packages.
 
-if test "$hpijs_only_build" = "no" && test "$network_build" = "yes" && test "$hpcups_only_build" = "no"; then
+if test "$hpijs_only_build" = "no" && test "$network_build" = "yes" && test "$hpcups_only_build" = "no" && test "$lite_build" = "no"; then
 #   AC_CHECK_LIB([crypto], [CRYPTO_free], [LIBS="$LIBS"], [AC_MSG_ERROR([cannot find net-snmp support (or --disable-network-build)], 4)])
 #   AC_CHECK_LIB([netsnmp], [snmp_timeout], [LIBS="$LIBS" AC_DEFINE([HAVE_LIBNETSNMP])], [AC_MSG_ERROR([cannot find net-snmp support (or --disable-network-build)], 4)])
 #   AC_CHECK_HEADERS(net-snmp/net-snmp-config.h,, [AC_MSG_ERROR([cannot find net-snmp-devel support (or --disable-network-build)], 5)])
@@ -618,14 +618,74 @@ fi
 
 fi
 
-#checking for AVAHI LIBS
-if test "$hpijs_only_build" = "no" && test "$network_build" = "yes" && test "$hpcups_only_build" = "no"; then
-   AC_DEFINE([HAVE_LIBAVAHI], 1, [Needed by the compiler.])
-   AC_CHECK_LIB([avahi-client], [avahi_client_new], , AC_MSG_ERROR(cannot find avahi_client support (or --disable-network-build)))
-   AC_CHECK_LIB([avahi-common], [avahi_strerror], , AC_MSG_ERROR(cannot find avahi_common support (or --disable-network-build)))
-   AC_CHECK_HEADERS(avahi-client/client.h,, [AC_MSG_ERROR([cannot find avahi_client support (or --disable-network-build)], 6)])   
-   AC_CHECK_HEADERS(avahi-common/malloc.h,, [AC_MSG_ERROR([cannot find avahi_common support (or --disable-network-build)], 6)])
+# ── Bonjour / mDNS network scanner discovery ──────────────────────────────
+# Requires: network_build=yes, not hpijs_only or hpcups_only
+# Backends (mutually exclusive, macOS wins if somehow both are present):
+#   1. macOS / dns_sd  – zero extra deps, always present on macOS
+#   2. Linux / Avahi   – optional, detected via pkg-config or AC_CHECK_LIB
+# If neither is found and network_build=yes, emit a warning (not a hard
+# error) so the build still succeeds without network scanner discovery.
+# ──────────────────────────────────────────────────────────────────────────
+if test "$hpijs_only_build" = "no" && \
+   test "$network_build"    = "yes" && \
+   test "$hpcups_only_build" = "no"; then
+
+  bonjour_backend="none"
+
+  # ── 1. macOS / dns_sd (CoreServices) ──────────────────────────────────
+  AC_MSG_CHECKING([for native dns_sd (macOS Bonjour)])
+  AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([[#include <dns_sd.h>]],
+                     [[DNSServiceRef ref; (void)ref;]])],
+    [
+      AC_MSG_RESULT([yes])
+      bonjour_backend="dnssd"
+      AC_DEFINE([HAVE_DNSSD], 1,
+                [Define if the native dns_sd / Bonjour API is available (macOS)])
+      # CoreServices is the umbrella framework that pulls in dns_sd on macOS
+      LIBS="$LIBS -framework CoreServices"
+    ],
+    [AC_MSG_RESULT([no])]
+  )
+
+  # ── 2. Linux / Avahi (only if dns_sd not found) ───────────────────────
+  if test "$bonjour_backend" = "none"; then
+    avahi_ok="yes"
+
+    AC_CHECK_LIB([avahi-client], [avahi_client_new],
+      [AC_DEFINE([HAVE_LIBAVAHI], 1, [Define if the Avahi client library is available])],
+      [avahi_ok="no"])
+
+    if test "$avahi_ok" = "yes"; then
+      AC_CHECK_LIB([avahi-common], [avahi_strerror],
+        [],
+        [avahi_ok="no"])
+    fi
+
+    if test "$avahi_ok" = "yes"; then
+      AC_CHECK_HEADERS([avahi-client/client.h avahi-common/malloc.h],
+        [],
+        [avahi_ok="no"])
+    fi
+
+    if test "$avahi_ok" = "yes"; then
+      bonjour_backend="avahi"
+    fi
+  fi
+
+  # ── Report result ──────────────────────────────────────────────────────
+  AC_MSG_CHECKING([for Bonjour/mDNS discovery backend])
+  AC_MSG_RESULT([$bonjour_backend])
+
+  if test "$bonjour_backend" = "none"; then
+    AC_MSG_WARN([No Bonjour/mDNS backend found (dns_sd or Avahi). \
+Network scanner discovery will be disabled. \
+On Linux install libavahi-client-dev to enable it.])
+  fi
+
 fi
+AM_CONDITIONAL([BUILD_DNSSD_DISCOVERY],  [test "$bonjour_backend" = "dnssd"])
+AM_CONDITIONAL([BUILD_AVAHI_DISCOVERY],  [test "$bonjour_backend" = "avahi"])
 
 if test "$hpijs_only_build" = "no" && test "$pp_build" = "yes" && test "$hpcups_only_build" = "no"; then
    AC_CHECK_HEADERS(linux/ppdev.h, ,[AC_MSG_ERROR([cannot find ppdev-devel support (or --disable-pp-build)], 8)])

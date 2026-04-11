@@ -95,11 +95,32 @@ endif # SCAN_BUILD
 # HP Service Discovery library
 if NETWORK_BUILD
 lib_LTLIBRARIES += libhpdiscovery.la
-#libhpdiscovery_la_SOURCES = protocol/discovery/mdns.c protocol/discovery/mdns.h
-libhpdiscovery_la_SOURCES = protocol/discovery/avahiDiscovery.c protocol/discovery/avahiDiscovery.h
-libhpdiscovery_la_CFLAGS  = -DCONFDIR=\"$(hplip_confdir)\" -I/usr/include/avahi-client -I/usr/include/avahi-core -I/usr/include/avahi-common $(DBUS_CFLAGS)
-libhpdiscovery_la_LDFLAGS = -version-info 0:1:0 -L$(libdir)
-libhpdiscovery_la_LIBADD  = -l$(SNMPLIB) -lcrypto -lavahi-client -lavahi-core -lavahi-common $(DBUS_LIBS)
+
+libhpdiscovery_la_SOURCES = \
+    protocol/discovery/bonjourDiscovery_common.h
+
+if BUILD_DNSSD_DISCOVERY
+libhpdiscovery_la_SOURCES += \
+    protocol/discovery/dnssdDiscovery.c
+libhpdiscovery_la_CFLAGS   = -DCONFDIR=\"$(hplip_confdir)\"
+libhpdiscovery_la_LDFLAGS  = -version-info 0:1:0 -L$(libdir)
+libhpdiscovery_la_LIBADD   = 
+endif #BUILD_DNSSD_DISCOVERY
+
+if BUILD_AVAHI_DISCOVERY
+libhpdiscovery_la_SOURCES += \
+    protocol/discovery/avahiDiscovery.c \
+    protocol/discovery/avahiDiscovery.h
+libhpdiscovery_la_CFLAGS   = -DCONFDIR=\"$(hplip_confdir)\" \
+    -I/usr/include/avahi-client \
+    -I/usr/include/avahi-core \
+    -I/usr/include/avahi-common \
+    $(DBUS_CFLAGS)
+libhpdiscovery_la_LDFLAGS  = -version-info 0:1:0 -L$(libdir)
+libhpdiscovery_la_LIBADD   = -lavahi-client -lavahi-core -lavahi-common \
+    $(DBUS_LIBS)
+endif #BUILD_AVAHI_DISCOVERY
+
 endif #NETWORK_BUILD
 
 
@@ -129,7 +150,9 @@ endif
 
 if NETWORK_BUILD
 libhpmud_la_CFLAGS  += -Iprotocol/discovery
-libhpmud_la_LDFLAGS += -l$(SNMPLIB) -lcrypto
+if !LITE_BUILD
+libhpmud_la_LDFLAGS += -l$(SNMPLIB) -lcrypt
+endif
 libhpmud_la_LIBADD  =  libhpdiscovery.la
 endif
 endif #HPLIP_CLASS_DRIVER
