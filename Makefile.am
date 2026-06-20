@@ -93,7 +93,7 @@ endif # SCAN_BUILD
 
 
 # HP Service Discovery library
-if NETWORK_BUILD
+if BUILD_BONJOUR
 lib_LTLIBRARIES += libhpdiscovery.la
 
 libhpdiscovery_la_SOURCES = \

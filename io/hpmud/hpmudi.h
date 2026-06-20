@@ -50,11 +50,11 @@
 #include "mlc.h"
 #include "dot4.h"
 #include "pml.h"
-#ifdef HAVE_LIBNETSNMP
+#if defined(HAVE_DISCOVERY)
 #include "jd.h"
 #endif
-#ifdef HAVE_LIBAVAHI
-#include "avahiDiscovery.h"
+#if defined(HAVE_DISCOVERY)
+#include "bonjourDiscovery_common.h"
 #endif
 #ifdef HAVE_PPORT
 #include "pp.h"

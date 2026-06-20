@@ -327,7 +327,7 @@ static int new_device(const char *uri, enum HPMUD_IO_MODE mode, int *result)
    {
       msp->device[i].vf = musb_mud_device_vf;
    }
-#ifdef HAVE_LIBNETSNMP
+#if defined(HAVE_DISCOVERY)
    else if (strcasestr(uri, ":/net") != NULL)
    {
       msp->device[i].vf = jd_mud_device_vf;
@@ -490,7 +490,7 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
    char *p;
    int i;
    int zc=0;
-#ifdef HAVE_LIBNETSNMP
+#if defined(HAVE_DISCOVERY)
    char ip[HPMUD_LINE_SIZE];
 #endif
 
@@ -515,8 +515,8 @@ int hpmud_get_uri_datalink(const char *uri, char *buf, int buf_size)
 
    if (zc)
    {
-#ifdef HAVE_LIBAVAHI
-    if (avahi_lookup(p) != AVAHI_STATUS_OK)
+#if defined(HAVE_DISCOVERY)
+    if (bonjour_lookup(p) != BONJOUR_STATUS_OK)
         return 0;
     for (i=0; (ipAddressBuff[i] != 0) && (i < buf_size); i++)
         buf[i] = ipAddressBuff[i];

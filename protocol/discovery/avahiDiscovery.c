@@ -12,8 +12,6 @@
  *   void bonjour_reset(void);               // new – frees aUriBuf etc.
  */
 
-#ifdef HAVE_LIBAVAHI
-
 #include "bonjourDiscovery_common.h"
 #include "avahiDiscovery.h"   /* keep original header for AVAHI_* constants */
 
@@ -530,5 +528,3 @@ void bonjour_reset(void)
     aAllForNow = 0;
     aResolving = 0;
 }
-
-#endif /* HAVE_LIBAVAHI */

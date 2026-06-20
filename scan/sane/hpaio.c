@@ -37,7 +37,7 @@
 #include <cups/cups.h>
 #include "hpmud.h"
 
-#if defined(HAVE_LIBAVAHI) || defined(__APPLE__)
+#if defined(HAVE_DISCOVERY)
 #include "bonjourDiscovery_common.h"
 #endif
 
@@ -320,7 +320,7 @@ static int DevDiscovery(int localOnly)
         }
         if (cups_printer)
             free(cups_printer);
-#if defined(HAVE_LIBAVAHI) || defined(__APPLE__)
+#if defined(HAVE_DISCOVERY)
         /* Discover NW scanners using Bonjour*/
         if (bonjour_probe_nw_scanners() == BONJOUR_STATUS_OK && aUriBuf != NULL) {
           token = strtok(aUriBuf, ";");

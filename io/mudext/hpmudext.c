@@ -299,7 +299,7 @@ static PyObject *make_usb_uri(PyObject *self, PyObject *args)
     return Py_BuildValue(FORMAT_STRING1, result, uri, bytes_read);
 }
 
-#ifdef HAVE_LIBNETSNMP
+#if defined(HAVE_DISCOVERY)
 static PyObject *make_net_uri(PyObject *self, PyObject *args)
 {
     char * ip;
@@ -324,7 +324,7 @@ static PyObject *make_net_uri(PyObject *self, PyObject *args)
 }
 #endif /* HAVE_LIBSNMP */
 
-#ifdef HAVE_LIBNETSNMP
+#if defined(HAVE_DISCOVERY)
 static PyObject *make_zc_uri(PyObject *self, PyObject *args)
 {
     char *hn;
@@ -347,9 +347,9 @@ static PyObject *make_zc_uri(PyObject *self, PyObject *args)
 {
     return Py_BuildValue(FORMAT_STRING1, HPMUD_R_INVALID_URI, "", 0);
 }
-#endif /* HAVE_LIBSNMP */
+#endif /* defined(HAVE_DISCOVERY) */
 
-#ifdef HAVE_LIBAVAHI
+#if defined(HAVE_DISCOVERY)
 static PyObject *get_zc_ip_address(PyObject *self, PyObject *args)
 {
     char *hn;
@@ -361,7 +361,7 @@ static PyObject *get_zc_ip_address(PyObject *self, PyObject *args)
 
     Py_BEGIN_ALLOW_THREADS
 
-    if(avahi_lookup(hn) != AVAHI_STATUS_OK)
+    if(bonjourlookup(hn) != BONJOUR_STATUS_OK)
         result =  HPMUD_R_INVALID_MDNS;
 
     Py_END_ALLOW_THREADS
@@ -373,7 +373,7 @@ static PyObject *get_zc_ip_address(PyObject *self, PyObject *args)
 {
     return Py_BuildValue("(is)", HPMUD_R_INVALID_URI, "");
 }
-#endif /* HAVE_LIBSNMP */
+#endif /* defined(HAVE_DISCOVERY) */
 
 #ifdef HAVE_PPORT
 static PyObject *make_par_uri(PyObject *self, PyObject *args)

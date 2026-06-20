@@ -625,12 +625,11 @@ fi
 #   2. Linux / Avahi   – optional, detected via pkg-config or AC_CHECK_LIB
 # If neither is found and network_build=yes, emit a warning (not a hard
 # error) so the build still succeeds without network scanner discovery.
+bonjour_backend="none"
 # ──────────────────────────────────────────────────────────────────────────
 if test "$hpijs_only_build" = "no" && \
    test "$network_build"    = "yes" && \
    test "$hpcups_only_build" = "no"; then
-
-  bonjour_backend="none"
 
   # ── 1. macOS / dns_sd (CoreServices) ──────────────────────────────────
   AC_MSG_CHECKING([for native dns_sd (macOS Bonjour)])
@@ -681,9 +680,13 @@ if test "$hpijs_only_build" = "no" && \
     AC_MSG_WARN([No Bonjour/mDNS backend found (dns_sd or Avahi). \
 Network scanner discovery will be disabled. \
 On Linux install libavahi-client-dev to enable it.])
+  else
+    AC_DEFINE([HAVE_DISCOVERY], 1,
+              [Define if the native dns_sd / Bonjour API is available (macOS)])
   fi
 
 fi
+AM_CONDITIONAL([BUILD_BONJOUR],  [test "$bonjour_backend" != "none"])
 AM_CONDITIONAL([BUILD_DNSSD_DISCOVERY],  [test "$bonjour_backend" = "dnssd"])
 AM_CONDITIONAL([BUILD_AVAHI_DISCOVERY],  [test "$bonjour_backend" = "avahi"])
 

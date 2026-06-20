@@ -24,7 +24,6 @@
 
   Author: Naga Samrat Chowdary Narla, Sarbeswar Meher
 \*****************************************************************************/
-#ifdef HAVE_LIBNETSNMP
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -773,8 +772,8 @@ enum HPMUD_RESULT hpmud_make_mdns_uri(const char *host, int port, char *uri, int
       stat = HPMUD_R_INVALID_MDNS;
       goto bugout;
    }
-   #ifdef HAVE_LIBAVAHI
-   if (avahi_lookup(host) != AVAHI_STATUS_OK)
+   #ifdef HAVE_DISCOVERY
+   if (bonjour_lookup(host) != BONJOUR_STATUS_OK)
    {
       BUG("invalid host %s, check firewall UDP/5353 or try using IP\n", host);
       stat = HPMUD_R_INVALID_MDNS;
@@ -802,7 +801,6 @@ bugout:
    return stat;
 }
 
-#endif  /* HAVE_LIBNETSNMP */
 
 
 
