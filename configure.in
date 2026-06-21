@@ -255,10 +255,8 @@ if test "$class_driver" = "yes"; then
    epm_scan=\#
    epm_class_driver=
    epm_class_install=yes
-   test `sh ./createPPD.sh -f` == 0
 else
    AC_MSG_RESULT(no)
-   test `sh ./createPPD.sh -q` == 0
 fi
 AM_CONDITIONAL(HPLIP_CLASS_DRIVER, test x$class_driver = xyes)
 
