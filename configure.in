@@ -429,6 +429,9 @@ AC_ARG_WITH(docdir, AS_HELP_STRING([--with-docdir=DIR],[set hplip documentation 
 AC_ARG_WITH(htmldir, AS_HELP_STRING([--with-htmldir=DIR],[set hplip html documentation directory [default=datadir/doc]]),
    hphtmldir=$withval, hphtmldir="$datadir/doc/hplip-$VERSION")
 
+AC_ARG_WITH(macos-app-modelsdir, AS_HELP_STRING([--with-macos-app-modelsdir=DIR],[set macOS app models database directory for bundle detection [default=data/models]]),
+   macos_app_modelsdir=$withval, macos_app_modelsdir="data/models")
+
 AC_MSG_CHECKING([for foomatic ppd install])
 AC_ARG_ENABLE(foomatic_ppd_install,
   [  --enable-foomatic-ppd-install    enable foomatic static ppd install (default=no)(Deprecated), uses hpppddir],
@@ -761,6 +764,7 @@ AC_SUBST(hpppddir)
 AC_SUBST(hpdocdir)
 AC_SUBST(hphtmldir)
 AC_SUBST(drvdir)
+AC_SUBST(macos_app_modelsdir)
 AC_SUBST(network_build)
 AC_SUBST(pp_build)
 AC_SUBST(gui_build)
@@ -816,8 +820,5 @@ AC_SUBST(prefix)
 AC_SUBST(udev_sysfs_rules)
 AC_SUBST(epm_class_driver)
 AC_SUBST(epm_class_install)
-macos_app_modelsdir=hplip/data/models
-AC_SUBST(macos_app_modelsdir)
-
 AC_CONFIG_FILES(Makefile hplip.conf hplip.desktop hp-uiscan.desktop hplip-systray.desktop prnt/drv/hpijs.drv prnt/drv/hpcups.drv hplip.list data/policykit/com.hp.hplip.service)
 AC_OUTPUT
