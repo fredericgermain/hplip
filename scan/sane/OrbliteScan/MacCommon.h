@@ -2,8 +2,8 @@
 #define H_MacCommon
 
 #ifndef __linux__
-#include <CoreFoundation/CFPlugInCOM.h>
-#define __CFPlugInCOM_Included__
+//#include <CoreFoundation/CFPlugInCOM.h>
+//#define __CFPlugInCOM_Included__
 #endif
 
 #ifdef __linux__
@@ -179,6 +179,9 @@ typedef float			FLOAT;
 typedef double          FLOAT64;
 typedef double 			DOUBLE;
 typedef size_t			SIZE_T;
+
+typedef u_int16_t                   UInt16;
+typedef u_int32_t                   UInt32;
 
 //typedef BYTE*					LPBYTE;
 //typedef BYTE*					PBYTE;

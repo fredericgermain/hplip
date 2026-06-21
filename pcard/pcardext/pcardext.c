@@ -208,7 +208,7 @@ PyObject * pcardext_read( PyObject * self, PyObject * args )
     
     if( FatReadFileExt( name, offset, len, buffer ) == len )
     {
-        return PyString_FromStringAndSize( (char *)buffer, len );
+        return PyBytes_FromStringAndSize( (char *)buffer, len );
     }
     else
     {
@@ -236,14 +236,17 @@ static PyMethodDef pcardext_methods[] =
 
 static char pcardext_documentation[] = "Python extension for HP photocard services";
 
-void initpcardext( void )
-{
-    PyObject * mod = Py_InitModule4( "pcardext", pcardext_methods, 
-                                     pcardext_documentation, (PyObject*)NULL, 
-                                     PYTHON_API_VERSION );
-                     
-    if (mod == NULL)
-      return;
-}
 
+static struct PyModuleDef pcardext_module = {
+    PyModuleDef_HEAD_INIT,
+    "pcardext",
+    pcardext_documentation,
+    -1,
+    pcardext_methods
+};
+
+PyMODINIT_FUNC PyInit_pcardext( void )
+{
+    return PyModule_Create( &pcardext_module );
+}
 
