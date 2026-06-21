@@ -48,7 +48,10 @@ if !HPLIP_CLASS_DRIVER
 hpdir = $(cupsbackenddir)
 hp_PROGRAMS = hp
 hp_SOURCES = prnt/backend/hp.c
-hp_LDADD = libhpmud.la libhpdiscovery.la $(DBUS_LIBS)
+hp_LDADD = libhpmud.la $(DBUS_LIBS)
+if NETWORK_BUILD
+hp_LDADD += libhpdiscovery.la
+endif #NETWORK_BUILD
 hp_LDFLAGS = $(libhpmud_la_LDFLAGS)
 hp_CFLAGS = $(DBUS_CFLAGS)
 endif #HPLIP_CLASS_DRIVER 
@@ -254,7 +257,10 @@ if !HPLIP_CLASS_DRIVER
 # ptest
 noinst_PROGRAMS += ptest
 ptest_SOURCES = pcard/ptest.c pcard/ptest.h pcard/fat.c pcard/fat.h
-ptest_LDADD = libhpmud.la libhpdiscovery.la
+ptest_LDADD = libhpmud.la
+if NETWORK_BUILD
+ptest_LDADD += libhpdiscovery.la
+endif #NETWORK_BUILD
 endif #!HPLIP_CLASS_DRIVER
 
 # data
