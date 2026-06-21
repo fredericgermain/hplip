@@ -805,6 +805,8 @@ AC_SUBST(prefix)
 AC_SUBST(udev_sysfs_rules)
 AC_SUBST(epm_class_driver)
 AC_SUBST(epm_class_install)
+macos_app_modelsdir=hplip/data/models
+AC_SUBST(macos_app_modelsdir)
 
 AC_CONFIG_FILES(Makefile hplip.conf hplip.desktop hp-uiscan.desktop hplip-systray.desktop prnt/drv/hpijs.drv prnt/drv/hpcups.drv hplip.list data/policykit/com.hp.hplip.service)
 AC_OUTPUT

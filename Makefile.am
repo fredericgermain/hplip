@@ -99,7 +99,7 @@ endif #NETWORK_BUILD
 if !HPLIP_CLASS_DRIVER
 MUDNAME=hpmud
 lib_LTLIBRARIES += libhpmud.la
-libhpmud_la_CFLAGS  = -DMUDNAME=\"$(MUDNAME)\" -DCONFDIR=\"$(hplip_confdir)\" -Iprotocol
+libhpmud_la_CFLAGS  = -DMUDNAME=\"$(MUDNAME)\" -DCONFDIR=\"$(hplip_confdir)\" -DMACOS_APP_MODELSDIR=\"$(macos_app_modelsdir)\" -Iprotocol
 libhpmud_la_LDFLAGS = -version-info 0:6:0 -lpthread -ldl 
 libhpmud_la_SOURCES = io/hpmud/hpmud.c io/hpmud/mlc.c io/hpmud/model.c io/hpmud/pml.c \
 	  io/hpmud/hpmud.h io/hpmud/hpmudi.h io/hpmud/list.h io/hpmud/mlc.h io/hpmud/pml.h io/hpmud/dot4.c \
