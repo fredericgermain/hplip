@@ -479,13 +479,14 @@ dist_policykit_policy_DATA = data/policykit/com.hp.hplip.policy
 endif
 
 
+if HPPGSZ_BUILD
 # hppgsz
 noinst_PROGRAMS += hppgsz
 hppgsz_SOURCES = prnt/hpijs/PrinterProperties.cpp prnt/hpijs/PrinterProperties.h prnt/hpijs/bug.h
 hppgsz_CXXFLAGS = $(libapdk_la_CXXFLAGS)
 hppgsz_CFLAGS = $(libapdk_la_CFLAGS)
 hppgsz_LDADD = libapdk.la -ljpeg -ldl
-
+endif
 
 if GUI_BUILD
 # hplip.desktop
