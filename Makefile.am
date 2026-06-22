@@ -164,7 +164,7 @@ dist_halpre_DATA = data/rules/20-hplip-devices.fdi
 endif #FULL_BUILD
 
 # hplip.conf
-hplip_confdir = /etc/hp
+hplip_confdir = $(sysconfdir)/hp
 hplip_conf_DATA = hplip.conf
 
 if FULL_BUILD
@@ -257,7 +257,7 @@ apparmor_profiledir = /etc/apparmor.d
 apparmor_profile_DATA = apparmor/usr.share.hplip
 dist_apparmor_profile_DATA = apparmor/usr.share.hplip
 
-apparmor_abstractiondir = /etc/apparmor.d/abstractions
+apparmor_abstractiondir = $(sysconfdir)/apparmor.d/abstractions
 apparmor_abstraction_DATA = apparmor/abstractions/hplip
 dist_apparmor_abstraction_DATA = apparmor/abstractions/hplip
 
