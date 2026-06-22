@@ -752,23 +752,22 @@ if HPLIP_BUILD
 if !HPLIP_CLASS_DRIVER
 #	   If scanner build, add hpaio entry to sane dll.conf.
 	if [ "$(scan_build)" = "yes" ]; then \
-	   $(mkinstalldirs) $(DESTDIR)/etc/sane.d; \
-	   if [ ! -f $(DESTDIR)/etc/sane.d/dll.conf ]; then \
-		  touch $(DESTDIR)/etc/sane.d/dll.conf; \
-	   fi; \
-	   if ! grep ^hpaio $(DESTDIR)/etc/sane.d/dll.conf >/dev/null 2>/dev/null ; then \
-		  echo "Adding hpaio entry to /etc/sane.d/dll.conf." ; \
-		  echo hpaio >>$(DESTDIR)/etc/sane.d/dll.conf ; \
-	   fi; \
- 	   if [ \( "$(UNAME)" = "x86_64" -a  -d "$(libdir)/x86_64-linux-gnu/sane" \) ]; then \
-	  	ln -sf $(libdir)/sane/libsane-hpaio.so $(libdir)/x86_64-linux-gnu/sane/ ; \
-	  	ln -sf $(libdir)/sane/libsane-hpaio.so.1 $(libdir)/x86_64-linux-gnu/sane/ ; \
-	   fi; \
-	   if [ \( \( "$(UNAME)" = "i686" -o "$(UNAME)" = "i386" \) -a -d "$(libdir)/i386-linux-gnu" \) ]; then \
-	      ln -sf $(libdir)/libhpmud.so.0.0.6  $(libdir)/i386-linux-gnu/libhpmud.so ; \
-	      ln -sf $(libdir)/libhpmud.so.0.0.6  $(libdir)/i386-linux-gnu/libhpmud.so.0 ; \
-	      ln -sf $(libdir)/sane/libsane-hpaio.so.1.0.0 $(libdir)/i386-linux-gnu/sane/libsane-hpaio.so.1 ; \
-	      ln -sf $(libdir)/sane/libsane-hpaio.so.1.0.0 $(libdir)/i386-linux-gnu/sane/libsane-hpaio.so ; \
+	   $(mkinstalldirs) $(DESTDIR)$(sysconfdir)/sane.d/dll.d; \
+ 	   if true ; then \
+ 		  echo "Adding hpaio entry to $(sysconfdir)/sane.d/dll.d/hpaio.conf." ; \
+ 		  echo hpaio >>$(DESTDIR)$(sysconfdir)/sane.d/dll.d/hpaio.conf ; \
+ 	   fi; \
+ 	   if [ \( "$(UNAME)" = "x86_64" -a  -d "$(DESTDIR)$(libdir)/x86_64-linux-gnu/sane" \) ]; then \
+	  	ln -sf $(DESTDIR)$(libdir)/sane/libsane-hpaio.so $(DESTDIR)$(libdir)/x86_64-linux-gnu/sane/ ; \
+	  	ln -sf $(DESTDIR)$(libdir)/sane/libsane-hpaio.so.1 $(DESTDIR)$(libdir)/x86_64-linux-gnu/sane/ ; \
+	   elif [ \( \( "$(UNAME)" = "i686" -o "$(UNAME)" = "i386" \) -a -d "$(DESTDIR)$(libdir)/i386-linux-gnu" \) ]; then \
+	      ln -sf $(DESTDIR)$(libdir)/libhpmud.so.0.0.6  $(DESTDIR)$(libdir)/i386-linux-gnu/libhpmud.so ; \
+	      ln -sf $(DESTDIR)$(libdir)/libhpmud.so.0.0.6  $(DESTDIR)$(libdir)/i386-linux-gnu/libhpmud.so.0 ; \
+	      ln -sf $(DESTDIR)$(libdir)/sane/libsane-hpaio.so.1.0.0 $(DESTDIR)$(libdir)/i386-linux-gnu/sane/libsane-hpaio.so.1 ; \
+	      ln -sf $(DESTDIR)$(libdir)/sane/libsane-hpaio.so.1.0.0 $(DESTDIR)$(libdir)/i386-linux-gnu/sane/libsane-hpaio.so ; \
+           else \
+              [ -d $(DESTDIR)$(libdir)/sane ] || mkdir $(DESTDIR)$(libdir)/sane; \
+	      ln -sf libsane-hpaio.so.1 $(DESTDIR)$(libdir)/sane/libsane-hpaio.so ; \
 	   fi \
 	fi
 endif #HPLIP_CLASS_DRIVER
