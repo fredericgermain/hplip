@@ -43,6 +43,7 @@ dist_www4_DATA = $(wwwsrc)/images/*
 endif 
  
 if HPLIP_BUILD
+if FULL_BUILD
 if !HPLIP_CLASS_DRIVER
 # hp backend.
 hpdir = $(cupsbackenddir)
@@ -55,6 +56,7 @@ endif #NETWORK_BUILD
 hp_LDFLAGS = $(libhpmud_la_LDFLAGS)
 hp_CFLAGS = $(DBUS_CFLAGS)
 endif #HPLIP_CLASS_DRIVER 
+endif #FULL_BUILD
 # hpaio sane backend
 if !HPLIP_CLASS_DRIVER
 if SCAN_BUILD
@@ -143,8 +145,10 @@ libhpip_la_SOURCES = ip/xconvolve.c ip/xfax.c ip/xgrayout.c ip/xjpg_dct.c ip/xjp
 	ip/hpip.h ip/ipdefs.h ip/xform.h ip/xjpg_dct.h ip/xjpg_huf.h ip/xjpg_mrk.h
 
 #hpmud rules data dir
+if FULL_BUILD
 rulessystemdir=/usr/lib/systemd/system
 dist_rulessystem_DATA =data/rules/hplip-printer@.service
+endif #FULL_BUILD
 
 # hpmud.rules
 if !HPLIP_CLASS_DRIVER
@@ -156,18 +160,22 @@ dist_rules_DATA = data/rules/56-hpmud.rules
 endif
 endif #HPLIP_CLASS_DRIVER
 
+if FULL_BUILD
 halpredir = /usr/share/hal/fdi/preprobe/10osvendor
 dist_halpre_DATA = data/rules/20-hplip-devices.fdi
+endif #FULL_BUILD
 
 # hplip.conf
 hplip_confdir = /etc/hp
 hplip_conf_DATA = hplip.conf
 
+if FULL_BUILD
 if !HPLIP_CLASS_DRIVER
 #pstotiff filter
 pstotiffdir = $(cupsfilterdir)
 pstotiff_SCRIPTS = fax/filters/pstotiff
 endif #HPLIP_CLASS_DRIVER
+endif #FULL_BUILD
 
 # hplip.state
 hplip_statedir = /var/lib/hp
@@ -644,12 +652,14 @@ endif # FAX_BUILD
 endif # HPCUPS ONLY
 endif # HPCUPS_INSTALL
 
+if FULL_BUILD
 dat2drvdir = $(hplipdir)
 dat2drv_PROGRAMS = dat2drv
 dat2drv_SOURCES = Common.h  Dat2drv.cpp  Dat2drv.h Normalize.cpp  Normalize.h
 if GCC_GE_47
 dat2drv_CXXFLAGS = -std=c++11
 endif
+endif #FULL_BUILD
 
 if HPPS_INSTALL
 hppsdir = $(cupsfilterdir)
@@ -660,17 +670,20 @@ hpps_LDADD = -lcups  $(DBUS_LIBS)
 endif #HPPS_INSTALL
 
 
+if FULL_BUILD
 #locate driver
 locatedriverdir = $(hplipdir)
 locatedriver_PROGRAMS = locatedriver
-locatedriver_SOURCES = FindPPD.cpp FindPPD.h
+locatedriver_SOURCES = FindPPD.cpp FindPPD.h common/utils.c common/utils.h
 if GCC_GE_47
 locatedriver_CXXFLAGS = -std=c++11
 endif
 if HPLIP_CLASS_DRIVER
 dist_locatedriver_DATA = locatedriver
 endif #HPLIP_CLASS_DRIVER
+endif #FULL_BUILD
 
+if FULL_BUILD
 # PPDs
 ppddir = $(hpppddir)
 
@@ -678,6 +691,15 @@ ppddir = $(hpppddir)
 #dist_ppd_DATA += $(foomatic_ppd_printers)
 #endif
 if FOOMATIC_DRV_INSTALL
+
+$cups_ppd_printers):
+if !HPLIP_CLASS_DRIVER
+	./createPPD.sh -q
+endif
+if HPLIP_CLASS_DRIVER
+	./createPPD.sh -f
+endif
+
 cupsdrvdir = $(drvdir)
 cupsdrv_DATA = $(foomatic_drv)
 endif
@@ -691,11 +713,11 @@ endif
 if HPLIP_CLASS_DRIVER
 dist_ppd_DATA = $(class_cups_ppd_printers)
 endif
+endif #FULL_BUILD 
 
 if CUPS_DRV_INSTALL
 cupsdrv2dir = $(drvdir)
 cupsdrv2_DATA = $(cups_drv)
-endif
 
 if HPLIP_CLASS_DRIVER
 filterdir=$(cupsfilterdir)
@@ -705,6 +727,7 @@ printpluginsdir=$(cupsfilterdir)
 dist_filter_DATA = hpcups hpps dat2drv
 dist_printplugins_DATA = prnt/plugins/hbpl1-arm32.so prnt/plugins/hbpl1-arm64.so prnt/plugins/hbpl1-x86_32.so prnt/plugins/hbpl1-x86_64.so prnt/plugins/lj-arm32.so prnt/plugins/lj-arm64.so prnt/plugins/lj-x86_32.so prnt/plugins/lj-x86_64.so
 endif #HPLIP_CLASS_DRIVER
+endif #CUPS_DRV_INSTALL
 
 install-data-hook:
 if HPLIP_BUILD
