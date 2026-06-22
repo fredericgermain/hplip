@@ -152,11 +152,9 @@ endif #FULL_BUILD
 
 # hpmud.rules
 if !HPLIP_CLASS_DRIVER
-rulesdir = /etc/udev/rules.d
 if UDEV_SYSFS_RULES
+rulesdir = /etc/udev/rules.d
 dist_rules_DATA = data/rules/56-hpmud_sysfs.rules
-else
-dist_rules_DATA = data/rules/56-hpmud.rules
 endif
 endif #HPLIP_CLASS_DRIVER
 
