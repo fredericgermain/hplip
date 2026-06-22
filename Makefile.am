@@ -129,6 +129,10 @@ libhpmud_la_LIBADD  =  libhpdiscovery.la
 endif
 endif #HPLIP_CLASS_DRIVER
 
+# models database, used by libhpmud and other components
+modelsdir = $(hplipdir)/data/models
+dist_models_DATA = data/models/models.dat
+
 # ip library
 lib_LTLIBRARIES += libhpip.la
 libhpip_la_LDFLAGS = -version-info 0:1:0
@@ -267,7 +271,6 @@ endif #NETWORK_BUILD
 endif #!HPLIP_CLASS_DRIVER
 
 # data
-modelsdir = $(hplipdir)/data/models
 if !HPLIP_CLASS_DRIVER
 images_16x16dir = $(hplipdir)/data/images/16x16
 images_24x24dir = $(hplipdir)/data/images/24x24
@@ -283,7 +286,6 @@ postscriptdir = $(hplipdir)/data/ps
 localzdir = $(hplipdir)/data/localization
 dist_postscript_DATA = data/ps/testpage.ps.gz data/ps/clean_page.pdf.gz
 endif #HPLIP_CLASS_DRIVER
-dist_models_DATA = data/models/models.dat
 
 if GUI_BUILD
 if !HPLIP_CLASS_DRIVER
