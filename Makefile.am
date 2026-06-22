@@ -518,7 +518,12 @@ dist_rip_SCRIPTS = prnt/hpijs/foomatic-rip-hplip
 endif
 
 # apdk
+if HPPGSZ_BUILD
 noinst_LTLIBRARIES = libapdk.la
+endif # HPPGSZ_BUILD
+if HPIJS_INSTALL
+noinst_LTLIBRARIES = libapdk.la
+endif # HPIJS_INSTALL
 libapdk_la_SOURCES = prnt/hpijs/models.cpp prnt/hpijs/breaks_open.cpp \
 	prnt/hpijs/dj9xxvip.cpp prnt/hpijs/dj9xx.cpp prnt/hpijs/capture.cpp prnt/hpijs/colormatch.cpp prnt/hpijs/colormatcher_open.cpp \
 	prnt/hpijs/compression.cpp prnt/hpijs/context2.cpp prnt/hpijs/create_so.cpp prnt/hpijs/creator.cpp \
